@@ -1,0 +1,71 @@
+# 规则模板：新增规则 = 加一段 YAML；热加载 POST /api/v1/admin/reload
+# 判定类型：metric_threshold / heartbeat / collector_failing
+rules:
+  - id: cpu_sustained_high
+    type: metric_threshold
+    metric: cpu_pct
+    warning: 85
+    critical: 95
+    for: 3m
+    cooldown: 20m
+    title: CPU 持续高负载
+
+  - id: load_high
+    type: metric_threshold
+    metric: load1
+    warning: 8
+    critical: 16
+    for: 5m
+    cooldown: 30m
+    title: 系统负载偏高
+
+  - id: mem_high
+    type: metric_threshold
+    metric: mem_pct
+    warning: 90
+    critical: 96
+    for: 2m
+    cooldown: 20m
+    title: 内存占用偏高
+
+  - id: disk_space_high
+    type: metric_threshold
+    metric: disk_used_pct
+    per_scope: true
+    warning: 88
+    critical: 95
+    for: 0s
+    cooldown: 30m
+    title: 磁盘空间告急
+
+  - id: disk_io_wait
+    type: metric_threshold
+    metric: cpu_iowait_pct
+    warning: 30
+    critical: 60
+    for: 5m
+    cooldown: 30m
+    title: IO 等待偏高
+
+  - id: agent_heartbeat_lost
+    type: heartbeat
+    severity: critical
+    timeout: 150s
+    cooldown: 10m
+    title: Agent 心跳丢失
+
+  - id: collector_failing
+    type: collector_failing
+    severity: warning
+    consecutive: 3
+    cooldown: 15m
+    title: 采集器连续失败
+
+  - id: probe_down
+    type: metric_threshold
+    metric: probe_ok
+    warning: 0.5
+    critical: 0.5
+    for: 1m
+    cooldown: 10m
+    title: 探活失败

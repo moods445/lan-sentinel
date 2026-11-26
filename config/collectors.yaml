@@ -1,0 +1,19 @@
+# 拉取型采集（仅用于装不了 Agent 的路由器/交换机/打印机/UPS）
+# 默认留空：Agent 是唯一默认采集主体。
+collectors: []
+# 示例：
+#  - host_id: router
+#    type: probe
+#    interval: 30s
+#    target: 192.168.1.1:80
+#  - host_id: nas-01
+#    type: http
+#    interval: 60s
+#    url: http://192.168.1.102:5000/api/health
+#    fields: { http_ok: "status" }
+#  - host_id: switch
+#    type: snmp
+#    interval: 60s
+#    target: 192.168.1.2:161
+#    community_ref: snmp_switch_ro
+#    interfaces: [2, 3]

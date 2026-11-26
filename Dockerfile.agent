@@ -1,0 +1,4 @@
+FROM gcr.io/distroless/static-debian12:nonroot
+COPY bin/sentinel-agent /sentinel-agent
+USER nonroot:nonroot
+ENTRYPOINT ["/sentinel-agent"]

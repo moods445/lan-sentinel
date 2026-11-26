@@ -1,0 +1,736 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>LanSentinel</title>
+<style>
+  :root{
+    --bg:#0b0f14; --panel:#131a22; --panel2:#18212b; --line:#22303d;
+    --fg:#e6edf3; --muted:#8b9bab; --ok:#3fb950; --warn:#d29922; --crit:#f85149;
+    --accent:#58a6ff; --purple:#bc8cff; --pink:#f778ba;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.5 -apple-system,"Segoe UI",Roboto,"Helvetica Neue","PingFang SC","Microsoft YaHei",sans-serif}
+  header{display:flex;align-items:center;gap:16px;padding:14px 20px;border-bottom:1px solid var(--line);position:sticky;top:0;background:rgba(11,15,20,.92);backdrop-filter:blur(6px);z-index:5}
+  h1{font-size:16px;margin:0;font-weight:600;letter-spacing:.5px}
+  h1 span{color:var(--accent)}
+  .stats{display:flex;gap:18px;margin-left:auto;color:var(--muted);font-size:13px}
+  .stats b{color:var(--fg);font-weight:600}
+  main{padding:18px 20px 40px;max-width:1400px;margin:0 auto}
+  .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:14px}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:14px}
+  .card.warn{border-color:#5a4413}
+  .card.crit{border-color:#6e2320}
+  .card.clickable{cursor:pointer;transition:border-color .15s,transform .15s}
+  .card.clickable:hover{border-color:var(--accent);transform:translateY(-1px)}
+  .card.clickable:focus{outline:2px solid var(--accent);outline-offset:2px}
+  .card .top{display:flex;align-items:center;gap:8px;margin-bottom:10px}
+  .dot{width:8px;height:8px;border-radius:50%;background:var(--muted);flex:none;display:inline-block}
+  .dot.online{background:var(--ok);box-shadow:0 0 6px var(--ok)}
+  .dot.stale{background:var(--warn)}
+  .dot.offline{background:var(--crit)}
+  .name{font-weight:600;font-size:15px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .kind{font-size:11px;color:var(--muted);border:1px solid var(--line);border-radius:4px;padding:0 5px}
+  .badge{margin-left:auto;font-size:11px;padding:1px 6px;border-radius:4px;background:#2a1f1f;color:var(--crit)}
+  .row{display:flex;justify-content:space-between;font-size:12px;color:var(--muted);margin-top:8px}
+  .row b{color:var(--fg);font-variant-numeric:tabular-nums}
+  .bar{height:5px;background:var(--panel2);border-radius:3px;overflow:hidden;margin-top:3px}
+  .bar > i{display:block;height:100%;background:var(--accent);border-radius:3px}
+  .bar.warn > i{background:var(--warn)}
+  .bar.crit > i{background:var(--crit)}
+  .metrics{display:grid;grid-template-columns:1fr 1fr;gap:10px 14px;margin-top:4px}
+  .label{font-size:11px;color:var(--muted);display:flex;justify-content:space-between}
+  .label b{color:var(--fg)}
+  h2{font-size:14px;margin:26px 0 10px;color:var(--muted);font-weight:600;letter-spacing:.4px}
+  table{width:100%;border-collapse:collapse;background:var(--panel);border:1px solid var(--line);border-radius:10px;overflow:hidden}
+  th,td{text-align:left;padding:8px 12px;font-size:13px;border-bottom:1px solid var(--line)}
+  th{color:var(--muted);font-weight:500;background:var(--panel2)}
+  tr:last-child td{border-bottom:0}
+  td.time{color:var(--muted);white-space:nowrap;font-variant-numeric:tabular-nums}
+  .sev{font-size:11px;padding:1px 6px;border-radius:4px}
+  .sev.critical{background:#3a1512;color:var(--crit)}
+  .sev.warning{background:#3a2d10;color:var(--warn)}
+  .empty{color:var(--muted);padding:18px;text-align:center;background:var(--panel);border:1px dashed var(--line);border-radius:10px}
+  .toast{position:fixed;right:18px;bottom:18px;background:#2d1512;color:var(--crit);border:1px solid #6e2320;padding:10px 14px;border-radius:8px;display:none;max-width:420px;z-index:40}
+  .auth{position:fixed;inset:0;background:rgba(5,8,12,.85);display:none;align-items:center;justify-content:center;z-index:50}
+  .auth .box{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:22px;width:340px}
+  .auth input{width:100%;padding:9px 10px;margin:10px 0;border-radius:6px;border:1px solid var(--line);background:var(--bg);color:var(--fg)}
+  button{background:var(--accent);border:0;color:#06121f;font-weight:600;padding:9px 12px;border-radius:6px;cursor:pointer;width:100%}
+  .hint{color:var(--muted);font-size:12px}
+  .hdrbtn{width:auto;padding:5px 12px;font-size:12px;background:var(--panel2);color:var(--fg);border:1px solid var(--line);font-weight:500}
+  .hdrbtn:hover{border-color:var(--accent)}
+  .polform .chks{display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:6px 12px;margin:6px 0 10px}
+  .chk{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--fg);cursor:pointer}
+  .chk input{accent-color:var(--accent)}
+  .polrow{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:10px;font-size:12px;color:var(--muted)}
+  .polrow input{padding:6px 8px;border-radius:6px;border:1px solid var(--line);background:var(--panel);color:var(--fg);font-size:12px}
+  .polrow input[type=number]{width:80px}
+  .polrow input[type=text]{flex:1;min-width:160px}
+  .btn-inline{width:auto;padding:6px 14px;font-size:12px;margin-left:auto}
+  .btn-ghost{width:auto;padding:6px 12px;font-size:12px;background:var(--panel2);color:var(--fg);border:1px solid var(--line)}
+  .btn-ghost:hover{border-color:var(--accent)}
+  #gpol .box{width:min(700px,94vw);max-height:88vh;overflow:auto}
+  #gpol .hint{margin:4px 0 10px}
+
+  /* agent detail drawer */
+  .drawer{position:fixed;inset:0;z-index:30;display:none}
+  .drawer.open{display:block}
+  .drawer-mask{position:absolute;inset:0;background:rgba(5,8,12,.68);backdrop-filter:blur(2px)}
+  .drawer-panel{position:absolute;top:0;right:0;bottom:0;width:min(780px,100%);background:var(--bg);border-left:1px solid var(--line);overflow:auto;box-shadow:-18px 0 40px rgba(0,0,0,.45);animation:slidein .16s ease-out}
+  @keyframes slidein{from{transform:translateX(20px);opacity:.7}to{transform:none;opacity:1}}
+  .dhead{position:sticky;top:0;z-index:2;display:flex;align-items:flex-start;gap:12px;padding:14px 18px;border-bottom:1px solid var(--line);background:rgba(11,15,20,.96);backdrop-filter:blur(6px)}
+  .d-title{font-size:17px;font-weight:600;display:flex;align-items:center;gap:8px;overflow-wrap:anywhere}
+  .d-sub{font-size:12px;color:var(--muted);margin-top:3px}
+  .iconbtn{width:32px;height:32px;padding:0;border-radius:8px;background:var(--panel2);color:var(--fg);border:1px solid var(--line);font-size:20px;line-height:1;flex:none;margin-left:auto}
+  .iconbtn:hover{border-color:var(--accent)}
+  .dcontent{padding:16px 18px 36px}
+  .section{margin-bottom:22px}
+  .section h4,.section h3{font-size:13px;margin:0 0 9px;color:var(--muted);font-weight:600;letter-spacing:.4px}
+  .sec-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:9px}
+  .sec-head h4{margin:0}
+  .range{display:flex;gap:6px}
+  .range button{width:auto;padding:4px 8px;font-size:12px;background:var(--panel2);color:var(--muted);border:1px solid var(--line)}
+  .range button.on{background:var(--accent);color:#06121f;border-color:var(--accent)}
+  .dgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px}
+  .kv{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:10px;min-width:0}
+  .kv .k{font-size:11px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .kv .v{font-size:15px;font-weight:600;margin-top:2px;font-variant-numeric:tabular-nums;overflow-wrap:anywhere}
+  .mgroup{margin-bottom:14px}
+  .mgh{font-size:11px;color:var(--muted);margin:0 0 6px;letter-spacing:.5px}
+  .chart{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:10px 12px;margin-bottom:10px}
+  .chart .ct{display:flex;justify-content:space-between;gap:12px;font-size:12px;color:var(--muted);margin-bottom:4px}
+  .chart .ct b{color:var(--fg);font-variant-numeric:tabular-nums}
+  .chart svg{width:100%;height:110px;display:block}
+  .empty-chart{height:110px;display:flex;align-items:center;justify-content:center;color:var(--muted);font-size:12px}
+  .dcontent table{table-layout:auto}
+  .dcontent .empty{padding:14px}
+  @media (max-width:600px){
+    .drawer-panel{width:100%}
+    .dcontent{padding:12px}
+    .stats{display:none}
+  }
+</style>
+</head>
+<body>
+<header>
+  <h1>Lan<span>Sentinel</span></h1>
+  <div class="stats">
+    <span>在线 <b id="s-online">-</b>/<b id="s-total">-</b></span>
+    <span>未关闭事件 <b id="s-open">-</b></span>
+    <span id="s-updated">-</span>
+    <button class="hdrbtn" onclick="openGlobalPolicy()">采集策略</button>
+  </div>
+</header>
+
+<main>
+  <div id="hosts" class="grid"></div>
+  <h2>事件</h2>
+  <div id="events"></div>
+</main>
+
+<div class="drawer" id="drawer" aria-hidden="true">
+  <div class="drawer-mask" onclick="closeHost()"></div>
+  <aside class="drawer-panel" role="dialog" aria-modal="true" aria-labelledby="d-title">
+    <div id="d-body"></div>
+  </aside>
+</div>
+
+<div class="toast" id="toast"></div>
+<div class="auth" id="auth">
+  <div class="box">
+    <div style="font-weight:600">需要访问令牌</div>
+    <div class="hint">面板已开启 Bearer Token 校验</div>
+    <input id="token" type="password" placeholder="PANEL_TOKEN" autocomplete="off">
+    <button onclick="saveToken()">保存</button>
+  </div>
+</div>
+
+<div class="auth" id="gpol">
+  <div class="box">
+    <div style="font-weight:600;font-size:15px">全局采集策略</div>
+    <div class="hint">对所有未单独配置的主机生效；保存后 Agent 在下一次同步自动应用，无需重装。</div>
+    <div id="gpol-body"><div class="hint">加载中…</div></div>
+    <div class="polrow">
+      <button class="btn-inline" style="margin-left:0" onclick="saveGlobalPolicy()">保存全局策略</button>
+      <button class="btn-ghost" onclick="closeGlobalPolicy()">关闭</button>
+    </div>
+  </div>
+</div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+let token = localStorage.getItem("sentinel_token") || "";
+let timer = null;
+let lastHosts = [];
+let currentHost = null;
+let currentEntry = null;
+let detailRange = 3600 * 1000;
+let detailDataAt = 0;
+let chartCache = { key: "", at: 0 };
+let policies = { global: null, hosts: [] };
+
+const POLICY_METRICS = [
+  {k:"*", label:"全部指标"},
+  {k:"cpu_pct", label:"CPU 使用率"},
+  {k:"cpu_iowait_pct", label:"IO 等待"},
+  {k:"mem_pct", label:"内存使用率"},
+  {k:"mem_used_gb", label:"已用内存"},
+  {k:"swap_pct", label:"Swap 使用率"},
+  {k:"load1", label:"负载 1m"},
+  {k:"load5", label:"负载 5m"},
+  {k:"load15", label:"负载 15m"},
+  {k:"net_rx_bps", label:"网络接收"},
+  {k:"net_tx_bps", label:"网络发送"},
+  {k:"proc_count", label:"进程数"},
+  {k:"uptime_s", label:"运行时长"},
+  {k:"temp:*", label:"温度"},
+  {k:"disk_used_pct:*", label:"磁盘使用率"},
+  {k:"disk_free_gb:*", label:"磁盘空闲"}
+];
+
+const METRIC_LABELS = {
+  cpu_pct: "CPU 使用率", cpu_iowait_pct: "IO 等待",
+  mem_pct: "内存使用率", swap_pct: "Swap 使用率", mem_used_gb: "已用内存",
+  load1: "负载 1m", load5: "负载 5m", load15: "负载 15m",
+  net_rx_bps: "网络接收", net_tx_bps: "网络发送",
+  proc_count: "进程数", uptime_s: "运行时长"
+};
+const RESOURCE_ORDER = ["cpu_pct","cpu_iowait_pct","mem_pct","swap_pct","mem_used_gb","load1","load5","load15","proc_count","uptime_s"];
+
+function api(path){
+  const h = token ? {"Authorization":"Bearer " + token} : {};
+  return fetch(path, {headers:h, cache:"no-store"}).then(r => {
+    if (r.status === 401){ showAuth(); throw new Error("unauthorized"); }
+    if (!r.ok) throw new Error("HTTP " + r.status);
+    return r.json();
+  });
+}
+function showAuth(){ $("auth").style.display = "flex"; $("token").focus(); }function saveToken(){ token = $("token").value.trim(); localStorage.setItem("sentinel_token", token); $("auth").style.display="none"; refresh(); }
+function toast(msg){ const t=$("toast"); t.textContent=msg; t.style.display="block"; clearTimeout(t._h); t._h=setTimeout(()=>t.style.display="none", 6000); }
+
+function apiSend(method, path, body){
+  const h = {"Content-Type":"application/json"};
+  if (token) h["Authorization"] = "Bearer " + token;
+  return fetch(path, {method:method, headers:h, body:body ? JSON.stringify(body) : undefined, cache:"no-store"}).then(r => {
+    if (r.status === 401){ showAuth(); throw new Error("unauthorized"); }
+    if (!r.ok) return r.text().then(t => { throw new Error((t || "HTTP " + r.status).slice(0, 200)); });
+    return r.json();
+  });
+}
+
+async function loadPolicies(){
+  try { policies = await api("/api/v1/policies"); }
+  catch (e) { if (e.message !== "unauthorized") toast("加载策略失败：" + e.message); }
+}
+
+function policyForm(prefix, pol, inheritText){
+  const enabled = new Set(pol.enabled_metrics || []);
+  const boxes = POLICY_METRICS.map(m =>
+    `<label class="chk"><input type="checkbox" value="${esc(m.k)}" ${enabled.has(m.k) ? "checked" : ""}>${esc(m.label)}</label>`
+  ).join("");
+  return `<div class="polform">
+    <div class="hint" style="margin:0 0 4px">采集指标（不勾选 = 采集全部）</div>
+    <div class="chks" id="${prefix}-metrics">${boxes}</div>
+    <div class="polrow">上报间隔 <input id="${prefix}-interval" type="number" min="0" max="3600" value="${pol.interval_s || ""}"> 秒
+      <span class="hint">留空 = 沿用${esc(inheritText)}</span></div>
+    <div class="polrow">监控挂载点 <input id="${prefix}-mounts" type="text" value="${esc((pol.mounts || []).join(","))}" placeholder="例如 /,/data"> 
+      <span class="hint">逗号分隔，最多 3 个，留空继承</span></div>
+  </div>`;
+}
+
+function readPolicyForm(prefix){
+  const enabled = [...document.querySelectorAll("#" + prefix + "-metrics input:checked")].map(i => i.value);
+  let interval = parseInt($(prefix + "-interval").value, 10);
+  if (isNaN(interval) || interval < 0) interval = 0;
+  const mounts = ($(prefix + "-mounts").value || "").split(",").map(s => s.trim()).filter(Boolean);
+  return {enabled_metrics:enabled, interval_s:interval, mounts:mounts};
+}
+
+function hostPolicyOverride(hostId){
+  return (policies.hosts || []).find(x => x.host_id === hostId) || null;
+}
+
+function renderHostPolicy(hostId){
+  const box = $("d-policy");
+  if (!box) return;
+  const g = policies.global || {};
+  const h = hostPolicyOverride(hostId);
+  const tag = $("d-pol-tag");
+  if (tag) tag.textContent = h ? "主机覆盖 · 全局 rev " + (g.rev || 0) : "跟随全局";
+  box.innerHTML = policyForm("hpol", h || g, "全局策略") + `<div class="polrow">
+    <button class="btn-inline" onclick="saveHostPolicy()">保存到本机</button>
+    ${h ? `<button class="btn-ghost" onclick="resetHostPolicy()">恢复全局</button>` : ""}
+  </div>`;
+}
+
+async function saveHostPolicy(){
+  if (!currentHost) return;
+  try {
+    await apiSend("PUT", "/api/v1/policies/hosts/" + encodeURIComponent(currentHost), readPolicyForm("hpol"));
+    await loadPolicies();
+    renderHostPolicy(currentHost);
+    toast("策略已保存，Agent 将在下一次同步后生效");
+  } catch (e) { if (e.message !== "unauthorized") toast("保存失败：" + e.message); }
+}
+
+async function resetHostPolicy(){
+  if (!currentHost) return;
+  try {
+    await apiSend("DELETE", "/api/v1/policies/hosts/" + encodeURIComponent(currentHost));
+    await loadPolicies();
+    renderHostPolicy(currentHost);
+    toast("已恢复跟随全局策略");
+  } catch (e) { if (e.message !== "unauthorized") toast("操作失败：" + e.message); }
+}
+
+async function openGlobalPolicy(){
+  $("gpol").style.display = "flex";
+  $("gpol-body").innerHTML = `<div class="hint">加载中…</div>`;
+  await loadPolicies();
+  $("gpol-body").innerHTML = policyForm("gpol", policies.global || {}, "Agent 本地配置");
+}
+
+function closeGlobalPolicy(){ $("gpol").style.display = "none"; }
+
+async function saveGlobalPolicy(){
+  try {
+    await apiSend("PUT", "/api/v1/policies/global", readPolicyForm("gpol"));
+    await loadPolicies();
+    toast("全局策略已保存，各 Agent 将在下一次同步后生效");
+    closeGlobalPolicy();
+    if (currentHost) renderHostPolicy(currentHost);
+  } catch (e) { if (e.message !== "unauthorized") toast("保存失败：" + e.message); }
+}
+
+function fmt(n, d=1){ return (n===undefined||n===null||isNaN(n)) ? "-" : Number(n).toFixed(d); }
+function fmtInt(n){ return (n===undefined||n===null||isNaN(n)) ? "-" : Math.round(n).toLocaleString("zh-CN"); }
+function fmtUptime(s){
+  if (!s) return "-";
+  s = Math.round(s);
+  const d = Math.floor(s/86400), h = Math.floor(s%86400/3600), m = Math.floor(s%3600/60);
+  return d ? `${d}d ${h}h` : (h ? `${h}h ${m}m` : `${m}m`);
+}
+function fmtBps(v){
+  if (v >= 1e9) return fmt(v/1e9, 2) + " Gbps";
+  if (v >= 1e6) return fmt(v/1e6, 2) + " Mbps";
+  if (v >= 1e3) return fmt(v/1e3, 1) + " Kbps";
+  return fmt(v, 0) + " bps";
+}
+function fmtTime(ts){
+  if (!ts) return "-";
+  const d = new Date(ts);
+  if (isNaN(d) || d.getFullYear() < 2000) return "-";
+  return d.toLocaleString("zh-CN", {hour12:false});
+}
+function ago(ts){
+  if (!ts) return "never";
+  const s = Math.max(0, Math.floor((Date.now() - new Date(ts).getTime())/1000));
+  if (s < 60) return s + "s 前";
+  if (s < 3600) return Math.floor(s/60) + "m 前";
+  if (s < 86400) return Math.floor(s/3600) + "h 前";
+  return Math.floor(s/86400) + "d 前";
+}
+function statusOf(ts){
+  if (!ts) return "offline";
+  const d = (Date.now() - new Date(ts).getTime()) / 1000;
+  return d < 60 ? "online" : (d < 300 ? "stale" : "offline");
+}
+function statusText(s){ return s === "online" ? "在线" : (s === "stale" ? "延迟" : "离线"); }
+function barClass(v, warn, crit){ return v >= crit ? "bar crit" : (v >= warn ? "bar warn" : "bar"); }
+function pick(m, prefix){
+  for (const k of Object.keys(m)) if (k.startsWith(prefix)) return {k, v:m[k]};
+  return null;
+}
+function esc(s){ return String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c])); }
+
+function metricLabel(k){
+  if (METRIC_LABELS[k]) return METRIC_LABELS[k];
+  if (k.startsWith("disk_used_pct:")) return "磁盘使用 " + k.slice(14);
+  if (k.startsWith("disk_free_gb:")) return "磁盘空闲 " + k.slice(13);
+  if (k.startsWith("temp:")) return "温度 " + k.slice(5);
+  return k;
+}
+function metricValue(k, v){
+  if (v === undefined || v === null || isNaN(v)) return "-";
+  if (k === "uptime_s") return fmtUptime(v);
+  if (k === "proc_count") return fmtInt(v);
+  if (k.endsWith("_pct")) return fmt(v, 1) + "%";
+  if (k === "mem_used_gb" || k.startsWith("disk_free_gb")) return fmt(v, 2) + " GB";
+  if (k.endsWith("_bps")) return fmtBps(v);
+  if (k.startsWith("temp:")) return fmt(v, 1) + " °C";
+  if (k.startsWith("load")) return fmt(v, 2);
+  return fmt(v, 2);
+}
+function metricRank(k){
+  const i = RESOURCE_ORDER.indexOf(k);
+  if (i >= 0) return i;
+  if (k.startsWith("temp:")) return 20;
+  if (k.startsWith("disk_")) return 30;
+  if (k.startsWith("net_")) return 40;
+  return 50;
+}
+
+function renderHosts(data){
+  const host = data.host;
+  const m = host.metrics || {};
+  const disk = pick(m, "disk_used_pct:") || {k:"disk_used_pct", v: null};
+  const diskLabel = disk.k.includes(":") ? disk.k.split(":")[1] : "disk";
+  const sevClass = data.max_severity === "critical" ? "crit" : (data.max_severity === "warning" ? "warn" : "");
+  const cpu = m.cpu_pct, mem = m.mem_pct;
+  const badge = data.open_events ? `<span class="badge">${data.open_events} 事件</span>` : "";
+  return `<div class="card ${sevClass} clickable" data-host="${esc(host.id)}" role="button" tabindex="0" title="查看 ${esc(host.name || host.id)} 详情">
+    <div class="top">
+      <span class="dot ${data.status}" title="${statusText(data.status)}"></span>
+      <span class="name" title="${esc(host.id)}">${esc(host.name || host.id)}</span>
+      <span class="kind">${esc(host.kind)}${host.os ? " · " + esc(host.os) : ""}${host.arch ? "/" + esc(host.arch) : ""}</span>
+      ${badge}
+    </div>
+    <div class="metrics">
+      <div>
+        <div class="label"><span>CPU</span><b>${fmt(cpu)}%</b></div>
+        <div class="${barClass(cpu||0, 70, 90)}"><i style="width:${Math.min(cpu||0,100)}%"></i></div>
+      </div>
+      <div>
+        <div class="label"><span>内存</span><b>${fmt(mem)}%</b></div>
+        <div class="${barClass(mem||0, 80, 92)}"><i style="width:${Math.min(mem||0,100)}%"></i></div>
+      </div>
+      <div>
+        <div class="label"><span>磁盘 ${esc(diskLabel)}</span><b>${fmt(disk.v)}%</b></div>
+        <div class="${barClass(disk.v||0, 85, 93)}"><i style="width:${Math.min(disk.v||0,100)}%"></i></div>
+      </div>
+      <div>
+        <div class="label"><span>负载 1m</span><b>${fmt(m.load1, 2)}</b></div>
+        <div class="label"><span>运行</span><b>${fmtUptime(m.uptime_s)}</b></div>
+      </div>
+    </div>
+    <div class="row"><span>${esc(host.addr || "")}</span><span>${ago(host.last_seen)} · 详情 ›</span></div>
+  </div>`;
+}
+
+function renderEvents(data){
+  const evs = data.events || [];
+  if (!evs.length) return `<div class="empty">暂无事件</div>`;
+  const rows = evs.map(e => `<tr>
+    <td class="time">${new Date(e.opened_at).toLocaleString("zh-CN", {hour12:false})}</td>
+    <td><span class="sev ${e.severity}">${e.severity === "critical" ? "严重" : "警告"}</span></td>
+    <td>${esc(e.host_id)}</td>
+    <td>${esc(e.title || e.rule_id)}</td>
+    <td>${e.value === undefined || e.value === null ? "-" : fmt(e.value)}</td>
+    <td>${e.status === "open" ? "未关闭" : "已恢复"}</td>
+  </tr>`).join("");
+  return `<table><thead><tr><th>时间</th><th>级别</th><th>主机</th><th>事件</th><th>观测值</th><th>状态</th></tr></thead><tbody>${rows}</tbody></table>`;
+}
+
+function kv(k, v, title){
+  return `<div class="kv"${title ? ` title="${esc(title)}"` : ""}><div class="k">${esc(k)}</div><div class="v">${esc(v)}</div></div>`;
+}
+
+function renderMetricGroups(m){
+  const keys = Object.keys(m).sort((a,b) => metricRank(a) - metricRank(b) || a.localeCompare(b));
+  const used = new Set();
+  const take = (fn) => keys.filter(k => !used.has(k) && fn(k)).map(k => { used.add(k); return k; });
+  const groups = [
+    {name:"资源", keys: take(k => RESOURCE_ORDER.includes(k) || k.startsWith("temp:"))},
+    {name:"磁盘", keys: take(k => k.startsWith("disk_"))},
+    {name:"网络", keys: take(k => k.startsWith("net_"))},
+    {name:"其他", keys: take(() => true)}
+  ];
+  return groups.filter(g => g.keys.length).map(g => `<div class="mgroup"><div class="mgh">${g.name}</div><div class="dgrid">${g.keys.map(k => metricCard(k, m[k])).join("")}</div></div>`).join("");
+}
+
+function metricCard(k, v){
+  let bar = "";
+  if (k.endsWith("_pct")) {
+    const warn = k === "cpu_pct" ? 70 : (k === "mem_pct" ? 80 : 85);
+    const crit = k === "cpu_pct" ? 90 : (k === "mem_pct" ? 92 : 93);
+    bar = `<div class="${barClass(v||0, warn, crit)}"><i style="width:${Math.min(Math.max(v||0,0),100)}%"></i></div>`;
+  }
+  return `<div class="kv" title="${esc(k)}"><div class="k">${esc(metricLabel(k))}</div><div class="v">${esc(metricValue(k, v))}</div>${bar}</div>`;
+}
+
+function detailShell(){
+  return `<div class="dhead">
+    <div>
+      <div class="d-title" id="d-title">-</div>
+      <div class="d-sub" id="d-sub"></div>
+    </div>
+    <button class="iconbtn" onclick="closeHost()" title="关闭">×</button>
+  </div>
+  <div class="dcontent">
+    <div class="section"><h4>主机信息</h4><div id="d-meta"></div></div>
+    <div class="section"><h4>最新指标</h4><div id="d-metrics"></div></div>
+    <div class="section">
+      <div class="sec-head"><h4>采集策略</h4><span class="hint" id="d-pol-tag"></span></div>
+      <div id="d-policy"></div>
+    </div>
+    <div class="section">
+      <div class="sec-head"><h4>指标曲线</h4><div class="range" id="d-range">
+        <button data-range="3600000" class="on" onclick="setRange(3600000,this)">1h</button>
+        <button data-range="21600000" onclick="setRange(21600000,this)">6h</button>
+        <button data-range="86400000" onclick="setRange(86400000,this)">24h</button>
+        <button onclick="refreshCharts()">刷新</button>
+      </div></div>
+      <div id="d-charts"></div>
+    </div>
+    <div class="section"><h4>事件</h4><div id="d-events"></div></div>
+    <div class="section"><h4>决策日志</h4><div id="d-decisions"></div></div>
+  </div>`;
+}
+
+function renderDetail(entry){
+  currentEntry = entry;
+  const host = entry.host || {};
+  const m = host.metrics || {};
+  const meta = host.meta || {};
+  if ($("d-title")) {
+    $("d-title").innerHTML = `<span class="dot ${entry.status}"></span> ${esc(host.name || host.id)}`;
+    $("d-sub").textContent = `${host.id} · ${host.kind || "-"}${host.os ? " · " + host.os : ""}${host.arch ? "/" + host.arch : ""} · ${statusText(entry.status)}`;
+  }
+  if ($("d-meta")) {
+    $("d-meta").innerHTML = `<div class="dgrid">
+      ${kv("主机 ID", host.id || "-")}
+      ${kv("状态", statusText(entry.status))}
+      ${kv("类型", host.kind || "-")}
+      ${kv("系统", `${host.os || "-"}${host.arch ? "/" + host.arch : ""}`)}
+      ${kv("地址", host.addr || "-")}
+      ${kv("首次发现", fmtTime(host.first_seen))}
+      ${kv("最后上报", fmtTime(host.last_seen))}
+      ${kv("未关闭事件", entry.open_events ?? 0)}
+      ${kv("Agent 版本", meta.agent || "-")}
+      ${kv("内核", meta.kernel || "-")}
+    </div>`;
+  }
+  if ($("d-metrics")) $("d-metrics").innerHTML = renderMetricGroups(m);
+}
+
+function renderDetailEvents(evs){
+  if (!evs.length) return `<div class="empty">该主机暂无事件</div>`;
+  const rows = evs.map(e => `<tr>
+    <td class="time">${fmtTime(e.opened_at)}</td>
+    <td><span class="sev ${e.severity}">${e.severity === "critical" ? "严重" : "警告"}</span></td>
+    <td>${esc(e.title || e.rule_id)}</td>
+    <td>${e.value === undefined || e.value === null ? "-" : fmt(e.value)}</td>
+    <td>${e.status === "open" ? "未关闭" : "已恢复"}</td>
+  </tr>`).join("");
+  return `<table><thead><tr><th>时间</th><th>级别</th><th>事件</th><th>观测值</th><th>状态</th></tr></thead><tbody>${rows}</tbody></table>`;
+}
+
+function renderDecisions(ds){
+  if (!ds.length) return `<div class="empty">该主机暂无决策记录</div>`;
+  const rows = ds.map(d => `<tr>
+    <td class="time">${fmtTime(d.ts)}</td>
+    <td><span class="kind">${esc(d.decision || "-")}</span></td>
+    <td>${esc(d.actor || d.actor_kind || "-")}</td>
+    <td>${esc(d.rule_id || "-")}</td>
+    <td>${esc(d.rationale || d.outcome || "-")}</td>
+  </tr>`).join("");
+  return `<table><thead><tr><th>时间</th><th>决策</th><th>执行者</th><th>规则</th><th>说明</th></tr></thead><tbody>${rows}</tbody></table>`;
+}
+
+async function openHost(id){
+  currentHost = id;
+  currentEntry = null;
+  chartCache = { key: "", at: 0 };
+  detailDataAt = 0;
+  $("d-body").innerHTML = detailShell();
+  $("drawer").classList.add("open");
+  $("drawer").setAttribute("aria-hidden", "false");
+  history.replaceState(null, "", "#host=" + encodeURIComponent(id));
+
+  let entry = lastHosts.find(h => h.host && h.host.id === id);
+  if (!entry) {
+    try {
+      const h = await api("/api/v1/hosts/" + encodeURIComponent(id));
+      entry = {host: h, status: statusOf(h.last_seen), open_events: 0, max_severity: ""};
+    } catch (e) {
+      toast("加载主机失败：" + e.message);
+      closeHost();
+      return;
+    }
+  }
+  renderDetail(entry);
+  loadDetailData(id);
+  loadCharts(entry, true);
+  loadPolicies().then(() => { if (currentHost === id) renderHostPolicy(id); });
+}
+
+function closeHost(){
+  currentHost = null;
+  currentEntry = null;
+  $("drawer").classList.remove("open");
+  $("drawer").setAttribute("aria-hidden", "true");
+  if (location.hash.startsWith("#host=")) history.replaceState(null, "", location.pathname + location.search);
+}
+
+function setRange(ms, btn){
+  detailRange = ms;
+  document.querySelectorAll("#d-range button[data-range]").forEach(b => b.classList.toggle("on", b === btn));
+  chartCache = { key: "", at: 0 };
+  if (currentEntry) loadCharts(currentEntry, true);
+}
+function refreshCharts(){
+  chartCache = { key: "", at: 0 };
+  if (currentEntry) loadCharts(currentEntry, true);
+}
+
+async function loadDetailData(id){
+  detailDataAt = Date.now();
+  try {
+    const [ev, dec] = await Promise.all([
+      api(`/api/v1/events?host=${encodeURIComponent(id)}&limit=20`),
+      api(`/api/v1/decisions?host=${encodeURIComponent(id)}&limit=20`)
+    ]);
+    if (currentHost !== id) return;
+    $("d-events").innerHTML = renderDetailEvents(ev.events || []);
+    $("d-decisions").innerHTML = renderDecisions(dec.decisions || []);
+  } catch (e) {
+    if (e.message !== "unauthorized") toast("加载详情失败：" + e.message);
+  }
+}
+
+function chartMetrics(m){
+  const names = [];
+  for (const k of ["cpu_pct","mem_pct","swap_pct","load1"]) if (m[k] !== undefined) names.push(k);
+  const disks = Object.keys(m).filter(k => k.startsWith("disk_used_pct:")).slice(0, 3);
+  names.push(...disks);
+  for (const k of ["net_rx_bps","net_tx_bps"]) if (m[k] !== undefined) names.push(k);
+  return names;
+}
+
+function chartColor(n){
+  if (n === "cpu_pct" || n === "net_rx_bps") return "#58a6ff";
+  if (n === "mem_pct") return "#3fb950";
+  if (n === "swap_pct" || n === "load1") return "#d29922";
+  if (n.startsWith("disk_") || n.startsWith("temp:")) return "#bc8cff";
+  if (n === "net_tx_bps") return "#f778ba";
+  return "#8b9bab";
+}
+
+function axisValue(n, v){
+  if (n.endsWith("_bps")) return fmtBps(v);
+  if (n.endsWith("_pct")) return fmt(v, 0) + "%";
+  if (n.startsWith("load")) return fmt(v, 1);
+  return fmt(v, 1);
+}
+
+function svgChart(points, color, metric){
+  if (!points || !points.length) return `<div class="empty-chart">暂无曲线数据</div>`;
+  const W = 600, H = 110, P = 8;
+  const ts = points.map(p => new Date(p.ts).getTime());
+  const vs = points.map(p => Number(p.v));
+  let min = Math.min(...vs), max = Math.max(...vs);
+  if (!isFinite(min) || !isFinite(max)) return `<div class="empty-chart">暂无曲线数据</div>`;
+  if (min === max) { min -= 1; max += 1; }
+  const pad = (max - min) * 0.08;
+  min -= pad; max += pad;
+  const x0 = ts[0] || 0, x1 = ts[ts.length - 1] || x0 + 1;
+  const X = t => P + ((t - x0) / (x1 - x0 || 1)) * (W - 2 * P);
+  const Y = v => H - P - ((v - min) / (max - min || 1)) * (H - 2 * P);
+  const d = points.map((p, i) => `${i ? "L" : "M"}${X(ts[i]).toFixed(1)},${Y(vs[i]).toFixed(1)}`).join(" ");
+  const area = `M${X(x0).toFixed(1)},${H - P} ${d.replace(/^M/, "L")} L${X(x1).toFixed(1)},${H - P} Z`;
+  const last = points.length === 1 ? `<circle cx="${X(ts[0]).toFixed(1)}" cy="${Y(vs[0]).toFixed(1)}" r="2.5" fill="${color}"/>` : "";
+  return `<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" role="img" aria-label="${esc(metric)}">
+    <line x1="${P}" y1="${H/2}" x2="${W-P}" y2="${H/2}" stroke="#22303d" stroke-dasharray="3 3"/>
+    <path d="${area}" fill="${color}" fill-opacity=".12"/>
+    <path d="${d}" fill="none" stroke="${color}" stroke-width="1.6" vector-effect="non-scaling-stroke"/>
+    ${last}
+    <text x="${P}" y="11" fill="#8b9bab" font-size="10">${esc(axisValue(metric, max))}</text>
+    <text x="${P}" y="${H - 2}" fill="#8b9bab" font-size="10">${esc(axisValue(metric, min))}</text>
+  </svg>`;
+}
+
+function chartCard(r){
+  const last = r.points && r.points.length ? r.points[r.points.length - 1].v : null;
+  return `<div class="chart">
+    <div class="ct"><span>${esc(metricLabel(r.n))}</span><b>${last === null ? "-" : esc(metricValue(r.n, last))}</b></div>
+    ${svgChart(r.points, chartColor(r.n), r.n)}
+  </div>`;
+}
+
+async function loadCharts(entry, force){
+  if (!entry || !entry.host) return;
+  const id = entry.host.id;
+  const key = id + "|" + detailRange;
+  if (!force && chartCache.key === key && Date.now() - chartCache.at < 30000) return;
+  chartCache = { key: key, at: Date.now() };
+  const names = chartMetrics(entry.host.metrics || {});
+  if (!names.length) {
+    $("d-charts").innerHTML = `<div class="empty">该主机暂无可绘制指标</div>`;
+    return;
+  }
+  const to = new Date();
+  const from = new Date(Date.now() - detailRange);
+  const results = await Promise.all(names.map(async n => {
+    try {
+      const d = await api(`/api/v1/hosts/${encodeURIComponent(id)}/metrics?metric=${encodeURIComponent(n)}&from=${encodeURIComponent(from.toISOString())}&to=${encodeURIComponent(to.toISOString())}&limit=300`);
+      return {n: n, points: d.points || []};
+    } catch (e) {
+      return {n: n, points: []};
+    }
+  }));
+  if (currentHost !== id) return;
+  $("d-charts").innerHTML = results.map(chartCard).join("");
+}
+
+async function refresh(){
+  try{
+    const [hosts, events] = await Promise.all([
+      api("/api/v1/hosts"),
+      api("/api/v1/events?limit=30")
+    ]);
+    lastHosts = hosts.hosts || [];
+    $("hosts").innerHTML = lastHosts.length ? lastHosts.map(renderHosts).join("") : `<div class="empty">还没有主机上报，先在目标机启动 sentinel-agent</div>`;
+    $("events").innerHTML = renderEvents(events);
+    $("s-online").textContent = hosts.online;
+    $("s-total").textContent = hosts.total;
+    $("s-open").textContent = (events.events || []).filter(e => e.status === "open").length;
+    $("s-updated").textContent = new Date().toLocaleTimeString("zh-CN", {hour12:false});
+    $("toast").style.display = "none";
+
+    if (currentHost) {
+      const entry = lastHosts.find(h => h.host && h.host.id === currentHost);
+      if (entry) {
+        renderDetail(entry);
+        if (Date.now() - detailDataAt > 15000) loadDetailData(currentHost);
+        if (currentEntry && Date.now() - chartCache.at > 30000) loadCharts(currentEntry, false);
+      } else {
+        closeHost();
+        toast("主机已不存在");
+      }
+    }
+  }catch(err){
+    if (err.message !== "unauthorized") toast("刷新失败：" + err.message);
+  }
+}
+
+function loop(){
+  clearInterval(timer);
+  const p = refresh();
+  timer = setInterval(() => { if (!document.hidden) refresh(); }, 5000);
+  return p;
+}
+document.addEventListener("visibilitychange", () => { if (!document.hidden) refresh(); });
+document.addEventListener("keydown", (e) => {
+  if (e.key !== "Escape") return;
+  if ($("gpol").style.display === "flex") { closeGlobalPolicy(); return; }
+  if (currentHost) closeHost();
+});
+$("hosts").addEventListener("click", (e) => {
+  const card = e.target.closest("[data-host]");
+  if (card) openHost(card.dataset.host);
+});
+$("hosts").addEventListener("keydown", (e) => {
+  if (e.key !== "Enter" && e.key !== " ") return;
+  const card = e.target.closest("[data-host]");
+  if (card) { e.preventDefault(); openHost(card.dataset.host); }
+});
+
+const hashHost = (() => {
+  const m = location.hash.match(/^#host=(.+)$/);
+  return m ? decodeURIComponent(m[1]) : "";
+})();
+loop().then(() => { if (hashHost) openHost(hashHost); });
+</script>
+</body>
+</html>
