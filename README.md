@@ -24,28 +24,34 @@
 
 ## 一键安装
 
-`install.sh` 同时支持二进制与 Docker；Linux 自动装 systemd（OpenWrt 用 procd），macOS 用 launchd。
+推 tag（`v*`）会触发 GitHub Actions：跑测试、交叉编译、发布 Release 资产，并把多架构镜像推到 GHCR。
 
 ```bash
-chmod +x install.sh
+BASE=https://raw.githubusercontent.com/moods445/lan-sentinel/master/install.sh
 
-# 控制面 + Agent，全 Docker（自带 PostgreSQL，最省事）
-sudo ./install.sh all --mode docker --port 8110
+# 控制面 + Agent，全 Docker（镜像来自 GHCR，自带 PostgreSQL）
+curl -fsSL $BASE | sudo bash -s -- all --mode docker --port 8110
 
 # 只装控制面（Docker，使用已有 PG）
-sudo ./install.sh server --mode docker --dsn 'postgres://user:pass@host:5432/sentinel?sslmode=disable'
+curl -fsSL $BASE | sudo bash -s -- server --mode docker \
+  --dsn 'postgres://user:pass@host:5432/sentinel?sslmode=disable'
 
-# 只装控制面（二进制，需要已就绪的 PostgreSQL）
-sudo ./install.sh server --mode binary --dsn 'postgres://...' --panel-token XXX
+# 控制面二进制（从 Release 下载并校验 sha256）
+curl -fsSL $BASE | sudo bash -s -- server --mode binary --dsn 'postgres://...'
 
-# 装 Agent（二进制 / Docker）
-sudo ./install.sh agent --mode binary --server http://192.168.1.102:8110 --token <AGENT_TOKEN>
-sudo ./install.sh agent --mode docker --server http://192.168.1.102:8110 --token <AGENT_TOKEN>
+# Agent 二进制（Linux systemd / OpenWrt procd / macOS launchd）
+curl -fsSL $BASE | sudo bash -s -- agent --mode binary \
+  --server http://192.168.1.102:8110 --token <AGENT_TOKEN>
+
+# Agent Docker
+curl -fsSL $BASE | sudo bash -s -- agent --mode docker \
+  --server http://192.168.1.102:8110 --token <AGENT_TOKEN>
 ```
 
-- Docker 模式默认从当前仓库构建 `lan-sentinel:0.2.0` / `lan-sentinel-agent:0.2.0`（`--no-build` 使用已有镜像）；
-- 控制面启动即自动迁移；随机生成 `PANEL_TOKEN` / `AGENT_TOKEN` 写入 `/opt/lan-sentinel/.env`（已存在则不覆盖）；
-- Agent 配置写入 `/etc/lan-sentinel/agent.json`（Docker 模式用环境变量），数据目录 `policy.json` 与 spool 自动创建；
+- 默认使用最新 Release；固定版本加 `--version v0.2.1`；
+- 镜像：`ghcr.io/moods445/lan-sentinel:<tag|latest>`、`ghcr.io/moods445/lan-sentinel-agent:<tag|latest>`（amd64 + arm64）；
+- 在源码仓库目录可用 `--build` 本地构建，不依赖 GHCR；
+- 首次发布后需在 GitHub 的 Packages 设置里把两个包改为 **Public**，否则匿名拉取会 401；
 - 全部参数见 `./install.sh --help`。
 
 ## 快速开始（本机）

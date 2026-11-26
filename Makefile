@@ -4,7 +4,7 @@ IMAGE   ?= lan-sentinel:$(VERSION)
 AGENT_IMAGE ?= lan-sentinel-agent:$(VERSION)
 UNRAID  ?= unraid
 UDIR    ?= /mnt/user/appdata/lan-sentinel
-LDFLAGS := -s -w -X main.version=$(VERSION)
+LDFLAGS := -s -w -X main.version=$(VERSION) -X github.com/home-aio/lan-sentinel/internal/agent.agentVersion=$(VERSION)
 
 .PHONY: help build server agent cross test vet image up down logs ps demo-db deploy agent-install clean
 
@@ -27,13 +27,15 @@ agent:
 	CGO_ENABLED=0 $(GO) build -trimpath -ldflags "$(LDFLAGS)" -o bin/sentinel-agent ./cmd/sentinel-agent
 
 cross:
+	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 $(GO) build -trimpath -ldflags "$(LDFLAGS)" -o bin/sentinel-linux-amd64 ./cmd/sentinel
+	CGO_ENABLED=0 GOOS=linux GOARCH=arm64 $(GO) build -trimpath -ldflags "$(LDFLAGS)" -o bin/sentinel-linux-arm64 ./cmd/sentinel
+	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 $(GO) build -trimpath -ldflags "$(LDFLAGS)" -o bin/sentinel-agent-linux-amd64 ./cmd/sentinel-agent
 	CGO_ENABLED=0 GOOS=linux GOARCH=arm64 $(GO) build -trimpath -ldflags "$(LDFLAGS)" -o bin/sentinel-agent-linux-arm64 ./cmd/sentinel-agent
 	CGO_ENABLED=0 GOOS=linux GOARCH=arm GOARM=7 $(GO) build -trimpath -ldflags "$(LDFLAGS)" -o bin/sentinel-agent-linux-armv7 ./cmd/sentinel-agent
 	CGO_ENABLED=0 GOOS=linux GOARCH=386 $(GO) build -trimpath -ldflags "$(LDFLAGS)" -o bin/sentinel-agent-linux-386 ./cmd/sentinel-agent
 	CGO_ENABLED=0 GOOS=darwin GOARCH=amd64 $(GO) build -trimpath -ldflags "$(LDFLAGS)" -o bin/sentinel-agent-darwin-amd64 ./cmd/sentinel-agent
 	CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 $(GO) build -trimpath -ldflags "$(LDFLAGS)" -o bin/sentinel-agent-darwin-arm64 ./cmd/sentinel-agent
 	CGO_ENABLED=0 GOOS=windows GOARCH=amd64 $(GO) build -trimpath -ldflags "$(LDFLAGS)" -o bin/sentinel-agent-windows-amd64.exe ./cmd/sentinel-agent
-	CGO_ENABLED=0 GOOS=linux GOARCH=arm64 $(GO) build -trimpath -ldflags "$(LDFLAGS)" -o bin/sentinel-linux-arm64 ./cmd/sentinel
 
 test:
 	$(GO) test ./...

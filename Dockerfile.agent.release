@@ -1,0 +1,6 @@
+# 发布用多架构镜像：构建前先 make cross，bin/ 下需有 sentinel-agent-linux-<arch>
+FROM gcr.io/distroless/static-debian12:nonroot
+ARG TARGETARCH
+COPY bin/sentinel-agent-linux-${TARGETARCH} /sentinel-agent
+USER nonroot:nonroot
+ENTRYPOINT ["/sentinel-agent"]

@@ -21,7 +21,7 @@ import (
 	"github.com/home-aio/lan-sentinel/internal/store"
 )
 
-const version = "0.2.0"
+var version = "0.2.0"
 
 func main() {
 	cmd := "serve"

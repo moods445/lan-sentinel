@@ -1,0 +1,8 @@
+# 发布用多架构镜像：构建前先 make cross，bin/ 下需有 sentinel-linux-<arch>
+FROM gcr.io/distroless/static-debian12:nonroot
+ARG TARGETARCH
+COPY bin/sentinel-linux-${TARGETARCH} /sentinel
+USER nonroot:nonroot
+EXPOSE 8110
+ENTRYPOINT ["/sentinel"]
+CMD ["serve"]
