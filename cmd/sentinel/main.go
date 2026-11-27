@@ -16,8 +16,8 @@ import (
 	"github.com/home-aio/lan-sentinel/internal/api"
 	"github.com/home-aio/lan-sentinel/internal/collectors"
 	"github.com/home-aio/lan-sentinel/internal/config"
-	"github.com/home-aio/lan-sentinel/internal/rules"
 	"github.com/home-aio/lan-sentinel/internal/rollup"
+	"github.com/home-aio/lan-sentinel/internal/rules"
 	"github.com/home-aio/lan-sentinel/internal/store"
 )
 
@@ -105,10 +105,31 @@ func serve() {
 	rl := rollup.New(st, log)
 
 	var mgr *collectors.Manager
-	if cfg.EnableCollectors && len(colList) > 0 {
+	syncTargets := func(ctx context.Context) error {
+		if mgr == nil {
+			return errors.New("collectors disabled")
+		}
+		targets, err := st.ListNodeTargets(ctx)
+		if err != nil {
+			return err
+		}
+		cs := make([]config.Collector, 0, len(targets))
+		for _, t := range targets {
+			cs = append(cs, config.Collector{
+				HostID: t.HostID, Name: t.Name, Type: t.Type, Target: t.Target,
+				Interval: config.Duration(time.Duration(t.IntervalS) * time.Second),
+			})
+		}
+		mgr.SetExtra(cs)
+		return nil
+	}
+	if cfg.EnableCollectors {
 		mgr = collectors.NewManager(st, colList, secrets, log)
+		if err := syncTargets(ctx); err != nil {
+			log.Warn("load node targets failed", "err", err)
+		}
 		go mgr.Run(ctx)
-		log.Info("collectors enabled", "count", len(colList))
+		log.Info("collectors enabled", "file", len(colList))
 	}
 
 	reload := func(ctx context.Context) (string, string, error) {
@@ -132,7 +153,7 @@ func serve() {
 
 	srv := api.New(api.Deps{
 		Store: st, Engine: eng, Rollup: rl, Log: log,
-		PanelToken: cfg.PanelToken, AgentToken: cfg.AgentToken,
+		PanelToken: cfg.PanelToken, AgentToken: cfg.AgentToken, InstallURL: cfg.InstallURL,
 		Reload: reload,
 		RunCollector: func(ctx context.Context, host string) error {
 			if mgr == nil {
@@ -140,6 +161,7 @@ func serve() {
 			}
 			return mgr.RunOnce(ctx, host)
 		},
+		SyncCollectors: syncTargets,
 	})
 
 	hs := &http.Server{

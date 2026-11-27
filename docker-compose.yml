@@ -1,6 +1,7 @@
+# 镜像来自 GHCR（GitHub Actions 构建的多架构镜像），不在本机构建
 services:
   sentinel:
-    image: ${SENTINEL_IMAGE:-lan-sentinel:0.2.0}
+    image: ${SENTINEL_IMAGE:-ghcr.io/moods445/lan-sentinel:latest}
     container_name: lan-sentinel
     restart: unless-stopped
     env_file:
@@ -31,7 +32,7 @@ services:
 
   # Unraid 自身也当被监控机：pid=host 只读挂载 /proc、/sys、/，不装系统服务
   agent:
-    image: ${SENTINEL_AGENT_IMAGE:-lan-sentinel-agent:0.2.0}
+    image: ${SENTINEL_AGENT_IMAGE:-ghcr.io/moods445/lan-sentinel-agent:latest}
     container_name: lan-sentinel-agent
     restart: unless-stopped
     pid: host

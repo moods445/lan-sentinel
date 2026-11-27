@@ -72,6 +72,34 @@ func (s *Store) EnsurePartition(ctx context.Context, ts time.Time) error {
 	return nil
 }
 
+// ensureSamplePartitions 为一批样本涉及的每个日期建分区。
+// 只建 samples[0] 那天的分区时，跨日批次（断网 spool 补传）会因「no partition for row」
+// 整批失败，而客户端是 FIFO 重发，失败批次会让整条补传队列卡死。
+//
+// 分区名按 UTC 日期命名，但 ensure_partition 的分区边界用的是数据库会话时区，
+// 所以一个 UTC 日期的行可能落进相邻日期的分区；这里对每个样本日期补建 前/当/后 三天，
+// 使写入与数据库时区无关（EnsurePartition 有缓存，命中时不查库）。
+func (s *Store) ensureSamplePartitions(ctx context.Context, samples []Sample) error {
+	seen := make(map[string]struct{}, 12)
+	for _, sm := range samples {
+		day := sm.TS.UTC()
+		for off := -1; off <= 1; off++ {
+			key := day.AddDate(0, 0, off).Format("20060102")
+			if _, ok := seen[key]; ok {
+				continue
+			}
+			if len(seen) >= 12 { // 防御伪造的超长时间跨度，最多 4 个样本日期
+				return nil
+			}
+			seen[key] = struct{}{}
+			if err := s.EnsurePartition(ctx, day.AddDate(0, 0, off)); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
 func (s *Store) EnsurePartitions(ctx context.Context, now time.Time, aheadDays int) error {
 	for i := 0; i <= aheadDays; i++ {
 		if err := s.EnsurePartition(ctx, now.AddDate(0, 0, i)); err != nil {
@@ -142,10 +170,8 @@ func (s *Store) Ingest(ctx context.Context, h HostInfo, samples []Sample, stream
 	if h.ID == "" {
 		return errors.New("empty host id")
 	}
-	if len(samples) > 0 {
-		if err := s.EnsurePartition(ctx, samples[0].TS); err != nil {
-			return err
-		}
+	if err := s.ensureSamplePartitions(ctx, samples); err != nil {
+		return err
 	}
 	if h.Kind == "" {
 		h.Kind = "agent"
@@ -166,6 +192,8 @@ func (s *Store) Ingest(ctx context.Context, h HostInfo, samples []Sample, stream
 			arch = COALESCE(NULLIF(EXCLUDED.arch,''), sentinel.hosts.arch),
 			kind = EXCLUDED.kind,
 			addr = COALESCE(NULLIF(EXCLUDED.addr,''), sentinel.hosts.addr),
+			-- 上报方带 meta 时刷新（Agent 升级后版本号才能更新），空对象则保留原值
+			meta = CASE WHEN EXCLUDED.meta <> '{}'::jsonb THEN EXCLUDED.meta ELSE sentinel.hosts.meta END,
 			last_seen = now()`,
 		h.ID, h.Name, h.OS, h.Arch, h.Kind, h.Addr, jsonBytes(h.Meta)); err != nil {
 		return err
@@ -265,17 +293,28 @@ func (s *Store) ListHosts(ctx context.Context) ([]HostRow, error) {
 	return out, rows.Err()
 }
 
+// Host 只查单个主机；早先复用 ListHosts 会把全部主机及其最新值全表拉一遍。
 func (s *Store) Host(ctx context.Context, id string) (*HostRow, error) {
-	list, err := s.ListHosts(ctx)
+	var r HostRow
+	var meta, metrics []byte
+	err := s.pool.QueryRow(ctx, `
+		SELECT h.id, h.name, h.os, h.arch, h.kind, h.addr, h.frozen, h.first_seen, h.last_seen,
+		       COALESCE(h.meta, '{}'::jsonb),
+		       COALESCE((SELECT jsonb_object_agg(ml.metric, ml.value)
+		                 FROM sentinel.metric_latest ml WHERE ml.host_id = h.id), '{}'::jsonb)
+		FROM sentinel.hosts h WHERE h.id = $1`, id).
+		Scan(&r.ID, &r.Name, &r.OS, &r.Arch, &r.Kind, &r.Addr, &r.Frozen, &r.FirstSeen, &r.LastSeen, &meta, &metrics)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
 	if err != nil {
 		return nil, err
 	}
-	for i := range list {
-		if list[i].ID == id {
-			return &list[i], nil
-		}
-	}
-	return nil, nil
+	r.Meta = map[string]any{}
+	_ = json.Unmarshal(meta, &r.Meta)
+	r.Metrics = map[string]float64{}
+	_ = json.Unmarshal(metrics, &r.Metrics)
+	return &r, nil
 }
 
 // ---------- stream ----------

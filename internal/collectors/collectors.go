@@ -17,6 +17,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/gosnmp/gosnmp"
@@ -26,19 +27,36 @@ import (
 )
 
 const (
-	oidSysUpTime      = "1.3.6.1.2.1.1.3.0"
-	oidHrProcessor    = "1.3.6.1.2.1.25.3.3.1.2"
-	oidIfOperStatus   = "1.3.6.1.2.1.2.2.1.8"
-	oidIfHCInOctets   = "1.3.6.1.2.1.31.1.1.1.6"
-	oidIfHCOutOctets  = "1.3.6.1.2.1.31.1.1.1.10"
+	oidSysUpTime     = "1.3.6.1.2.1.1.3.0"
+	oidHrProcessor   = "1.3.6.1.2.1.25.3.3.1.2"
+	oidIfOperStatus  = "1.3.6.1.2.1.2.2.1.8"
+	oidIfHCInOctets  = "1.3.6.1.2.1.31.1.1.1.6"
+	oidIfHCOutOctets = "1.3.6.1.2.1.31.1.1.1.10"
 )
 
+// Store 是调度器需要的存储能力；用接口声明便于单测注入假实现
+type Store interface {
+	Ingest(ctx context.Context, h store.HostInfo, samples []store.Sample, streamPayload map[string]any) error
+	SaveCollectorState(ctx context.Context, st store.CollectorState) error
+	AppendStream(ctx context.Context, typ, hostID string, payload map[string]any) error
+}
+
+// item 的可变状态分两类：
+//   - next/failures 用原子量，tick 每秒扫全部 item 时不必加锁（否则会阻塞面板侧的重载/加节点）；
+//   - prev 只在 runOne 内读写，靠 mu 让「定时任务」与「手动触发」串行，避免并发写 map 直接 panic。
 type item struct {
 	cfg      config.Collector
-	next     time.Time
-	failures int
-	prev     map[string]prevSample
+	next     atomic.Int64 // UnixNano
+	failures atomic.Int32
+
+	mu   sync.Mutex
+	prev map[string]prevSample
 }
+
+func (it *item) nextAt() time.Time   { return time.Unix(0, it.next.Load()) }
+func (it *item) setNext(t time.Time) { it.next.Store(t.UnixNano()) }
+func (it *item) failCount() int      { return int(it.failures.Load()) }
+func (it *item) setFailures(n int)   { it.failures.Store(int32(n)) }
 
 type prevSample struct {
 	value float64
@@ -46,32 +64,48 @@ type prevSample struct {
 }
 
 type Manager struct {
-	st      *store.Store
+	st      Store
 	log     *slog.Logger
 	secrets map[string]string
 
 	mu    sync.Mutex
+	base  []config.Collector
+	extra []config.Collector
 	items map[string]*item
 	sem   chan struct{}
 }
 
-func NewManager(st *store.Store, cfg []config.Collector, secrets map[string]string, log *slog.Logger) *Manager {
+func NewManager(st Store, cfg []config.Collector, secrets map[string]string, log *slog.Logger) *Manager {
 	m := &Manager{st: st, log: log, secrets: secrets, items: map[string]*item{}, sem: make(chan struct{}, 2)}
 	m.Reload(cfg)
 	return m
 }
 
+// Reload 替换文件配置（collectors.yaml），保留面板动态节点。
 func (m *Manager) Reload(cfg []config.Collector) {
-	now := time.Now()
-	next := map[string]*item{}
 	m.mu.Lock()
-	defer m.mu.Unlock()
-	for _, c := range cfg {
-		it := &item{cfg: c, next: now.Add(jitter(0)), prev: map[string]prevSample{}}
-		if old, ok := m.items[c.HostID]; ok && old.cfg.Type == c.Type {
-			it.prev = old.prev
-			it.failures = old.failures
-			it.next = old.next
+	m.base = cfg
+	m.rebuildLocked()
+	m.mu.Unlock()
+}
+
+// SetExtra 替换面板动态添加的节点（数据库），保留文件配置。
+func (m *Manager) SetExtra(cfg []config.Collector) {
+	m.mu.Lock()
+	m.extra = cfg
+	m.rebuildLocked()
+	m.mu.Unlock()
+}
+
+func (m *Manager) rebuildLocked() {
+	next := map[string]*item{}
+	for _, c := range append(append([]config.Collector{}, m.base...), m.extra...) {
+		it := &item{cfg: c, prev: map[string]prevSample{}} // next 零值 = 立即可跑
+		if old, ok := m.items[c.HostID]; ok {
+			it.failures.Store(old.failures.Load())
+			it.next.Store(old.next.Load())
+			// prev（SNMP 计数器基线）不跨重建继承：旧 item 可能仍在跑，读它要加锁，
+			// 而在 m.mu 下等锁会堵住面板侧的重载/加节点；代价只是每个接口少一个 bps 采样点。
 		}
 		next[c.HostID] = it
 	}
@@ -97,7 +131,7 @@ func (m *Manager) tick(ctx context.Context) {
 	m.mu.Lock()
 	var due []*item
 	for _, it := range m.items {
-		if !it.next.After(now) {
+		if !it.nextAt().After(now) {
 			due = append(due, it)
 		}
 	}
@@ -108,7 +142,7 @@ func (m *Manager) tick(ctx context.Context) {
 		default:
 			return // 并发已满，下一跳再试
 		}
-		it.next = now.Add(30 * time.Second) // 先占位，跑完再按结果重排
+		it.setNext(now.Add(30 * time.Second)) // 先占位，跑完再按结果重排
 		go func(it *item) {
 			defer func() { <-m.sem }()
 			if err := m.runOne(ctx, it); err != nil {
@@ -130,6 +164,10 @@ func (m *Manager) RunOnce(ctx context.Context, host string) error {
 }
 
 func (m *Manager) runOne(ctx context.Context, it *item) error {
+	// 串行化同一 item：定时任务与手动触发并发跑会让 rate() 里的 it.prev 并发写直接 panic
+	it.mu.Lock()
+	defer it.mu.Unlock()
+
 	timeout := it.cfg.Timeout.Std()
 	if timeout <= 0 || timeout > 4*time.Second {
 		timeout = 4 * time.Second
@@ -139,24 +177,21 @@ func (m *Manager) runOne(ctx context.Context, it *item) error {
 
 	samples, err := m.collect(cctx, it, timeout)
 	now := time.Now()
-	m.mu.Lock()
 	if err != nil {
-		it.failures++
-		back := backoff(it.failures)
-		it.next = now.Add(back)
+		it.setFailures(it.failCount() + 1)
+		it.setNext(now.Add(backoff(it.failCount())))
 	} else {
-		it.failures = 0
-		it.next = now.Add(jitter(it.cfg.Interval.Std()))
+		it.setFailures(0)
+		it.setNext(now.Add(jitter(it.cfg.Interval.Std())))
 	}
-	failures := it.failures
-	m.mu.Unlock()
+	failures, next := it.failCount(), it.nextAt()
 
 	kind := it.cfg.Type
 	host := store.HostInfo{ID: it.cfg.HostID, Name: nameOr(it.cfg), Kind: kind, Addr: targetOf(it.cfg)}
 	if err != nil {
 		m.log.Warn("collector failed", "host", host.ID, "type", kind, "failures", failures, "err", err)
 		_ = m.st.SaveCollectorState(ctx, store.CollectorState{
-			HostID: host.ID, Failures: failures, LastError: truncate(err.Error(), 200), NextRunAt: it.next,
+			HostID: host.ID, Failures: failures, LastError: truncate(err.Error(), 200), NextRunAt: next,
 		})
 		if failures == 1 || failures%10 == 0 {
 			_ = m.st.AppendStream(ctx, "collector.failed", host.ID,
@@ -171,7 +206,7 @@ func (m *Manager) runOne(ctx context.Context, it *item) error {
 		return err
 	}
 	_ = m.st.SaveCollectorState(ctx, store.CollectorState{
-		HostID: host.ID, Failures: 0, LastOKAt: &okAt, NextRunAt: it.next,
+		HostID: host.ID, Failures: 0, LastOKAt: &okAt, NextRunAt: next,
 	})
 	return nil
 }
@@ -225,6 +260,8 @@ func (m *Manager) collectHTTP(ctx context.Context, c config.Collector, timeout t
 		return nil, fmt.Errorf("http url required")
 	}
 	tr := &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: c.Insecure}, MaxIdleConns: 2}
+	// Transport 每次调用新建，必须显式关闭空闲连接，否则每条连接都会残留到进程退出（fd 泄漏）
+	defer tr.CloseIdleConnections()
 	client := &http.Client{Timeout: timeout, Transport: tr}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.URL, nil)
 	if err != nil {

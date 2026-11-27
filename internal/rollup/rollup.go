@@ -21,15 +21,20 @@ type agg struct {
 	n             int
 }
 
+// Store 是聚合落库需要的最小能力；用接口声明便于单测注入失败场景
+type Store interface {
+	InsertRollup(ctx context.Context, host, metric string, bucket time.Time, avg, min, max float64, n int) error
+}
+
 type Rollup struct {
-	st *store.Store
+	st  Store
 	log *slog.Logger
 
 	mu      sync.Mutex
 	buckets map[key]*agg
 }
 
-func New(st *store.Store, log *slog.Logger) *Rollup {
+func New(st Store, log *slog.Logger) *Rollup {
 	return &Rollup{st: st, log: log, buckets: map[key]*agg{}}
 }
 
@@ -75,6 +80,8 @@ func (r *Rollup) Run(ctx context.Context) {
 	}
 }
 
+// Flush 把内存聚合落库；单个 bucket 失败只影响它自己，其余继续写，
+// 失败的全部放回内存等下一轮重试（早先的实现在首个错误处 return，会让快照里剩下的 bucket 直接丢失）。
 func (r *Rollup) Flush(ctx context.Context) error {
 	r.mu.Lock()
 	if len(r.buckets) == 0 {
@@ -85,11 +92,17 @@ func (r *Rollup) Flush(ctx context.Context) error {
 	r.buckets = map[key]*agg{}
 	r.mu.Unlock()
 
+	var firstErr error
+	failed := 0
 	for k, a := range snapshot {
 		if a.n == 0 {
 			continue
 		}
 		if err := r.st.InsertRollup(ctx, k.host, k.metric, k.minute, a.sum/float64(a.n), a.min, a.max, a.n); err != nil {
+			if firstErr == nil {
+				firstErr = err
+			}
+			failed++
 			// 失败则放回，下次重试
 			r.mu.Lock()
 			if cur := r.buckets[k]; cur != nil {
@@ -105,8 +118,10 @@ func (r *Rollup) Flush(ctx context.Context) error {
 				r.buckets[k] = a
 			}
 			r.mu.Unlock()
-			return err
 		}
 	}
-	return nil
+	if failed > 0 && r.log != nil {
+		r.log.Warn("rollup flush partially failed", "failed", failed, "total", len(snapshot))
+	}
+	return firstErr
 }

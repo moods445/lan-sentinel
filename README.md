@@ -50,7 +50,7 @@ curl -fsSL $BASE | sudo bash -s -- agent --mode docker \
 
 - 默认使用最新 Release；固定版本加 `--version v0.2.1`；
 - 镜像：`ghcr.io/moods445/lan-sentinel:<tag|latest>`、`ghcr.io/moods445/lan-sentinel-agent:<tag|latest>`（amd64 + arm64）；
-- 在源码仓库目录可用 `--build` 本地构建，不依赖 GHCR；
+- 项目约定不本地构建 Docker 镜像，一律使用 GHCR 已构建好的镜像；
 - 首次发布后需在 GitHub 的 Packages 设置里把两个包改为 **Public**，否则匿名拉取会 401；
 - 全部参数见 `./install.sh --help`。
 
@@ -86,12 +86,26 @@ curl 'localhost:8110/api/v1/events?status=open'
 curl 'localhost:8110/api/v1/stream?since=0&wait=1s'
 ```
 
-## Unraid 部署（只跑程序）
+## Unraid 部署（只跑程序，镜像来自 GHCR）
+
+**不在本机构建镜像**：推 tag 时 GitHub Actions 构建并推送多架构镜像到 GHCR，Unraid 直接拉取。
 
 ```bash
-make server && make image && make agent-image   # Debian 上构建，两个 distroless 镜像
-make deploy UNRAID=unraid                       # docker save | ssh load + scp 配置
+cp .env.example .env            # 填 PG_DSN / AGENT_TOKEN；镜像已默认指向 GHCR
+make deploy UNRAID=unraid       # scp compose + 配置 → 远端 docker compose pull && up -d
 ```
+
+或只在 Unraid 上操作（`/mnt/user/appdata/lan-sentinel` 已有 compose 与 `.env`）：
+
+```bash
+cd /mnt/user/appdata/lan-sentinel
+docker compose pull && docker compose up -d --force-recreate
+```
+
+- 版本在 `.env` 固定：`SENTINEL_IMAGE=ghcr.io/moods445/lan-sentinel:v0.2.1`、
+  `SENTINEL_AGENT_IMAGE=ghcr.io/moods445/lan-sentinel-agent:v0.2.1`（不填则用 `:latest`）；
+  升级只改这两行再 `docker compose pull`，不做任何本地构建。
+- 首次需在 GitHub Packages 里把两个包设为 **Public**，否则 Unraid 拉取会 401。
 
 首次需建独立库与角色（**交互式 `\password`**，明文不进 SQL 历史；密码由你自己保管并写入 `.env` 的 `PG_DSN`）：
 
@@ -168,6 +182,30 @@ spool 在 `/var/lib/lan-sentinel/`；macOS 写 `/Library/LaunchDaemons`，Window
 主机覆盖中留空的字段继承全局。Agent 会把最近一次策略写入 `<data_dir>/policy.json`，断网重启后继续沿用，
 因此控制面短暂不可达也不会突然恢复全量采集。
 
+## 添加节点
+
+面板右上角「添加节点」提供两种接入方式：
+
+- **能装 Agent**：生成一键安装命令（含控制面地址与 `AGENT_TOKEN`），在目标机用 root 执行，约 15 秒后
+  出现在主机墙；Linux systemd / OpenWrt procd / macOS launchd 均支持。
+- **不能装 Agent**：填入 IP（可选端口与名称），控制面创建 `probe` 节点，每 30 秒做一次 TCP 可达性探测，
+  产出 `probe_ok` 与 `probe_latency_ms`，适合路由器、交换机、打印机、UPS。
+
+探测节点保存在 `collector_targets` 表，控制面重启后自动恢复；面板内可移除（同时清理该主机的最新值与
+采集状态）。Agent 节点无需登记，首次上报即自动出现。
+
+## AI Agent 接入
+
+面板右上角「AI 接入」提供三段可直接复制的内容：
+
+- **接入方式**：HTTP API 清单（主机、事件、决策、曲线、长轮询流、采集器、策略），MCP 尚未提供；
+- **值守提示词**：7×24 值守的连接方式、`next_seq` 游标续读、巡检节奏与输出结构；
+- **授权与排障**：只读自动执行、低/中/高风险分级、401 自动重新鉴权、429/5xx 退避，以及
+  401 误令牌、`probe_down`、采集器失败三个授权演练步骤与自检脚本；内置「运行授权自检」按钮，
+  验证错误令牌返回 401、当前令牌返回 200。
+
+MCP 服务计划在 M6 提供，届时以 `stream_events` 为资源、查询能力为 tools，鉴权方式与 HTTP API 一致。
+
 ## 资源实测
 
 | 进程 | 二进制 | RSS | CPU（空闲） |
@@ -194,6 +232,9 @@ Agent 15s 一次 gzip 上报、30s 采样；控制面每 10s 规则求值、每 
 | GET | `/api/v1/policies` | 全局策略 + 各主机覆盖项 |
 | PUT | `/api/v1/policies/global` | 保存全局采集策略 |
 | PUT / DELETE | `/api/v1/policies/hosts/{id}` | 保存 / 删除单机覆盖 |
+| GET | `/api/v1/nodes` | 添加节点信息（安装脚本、控制面地址、探测节点） |
+| POST | `/api/v1/nodes/probe` | 添加无 Agent 探测节点（IP/端口） |
+| DELETE | `/api/v1/nodes/probe/{id}` | 移除探测节点 |
 
 ## 目录
 

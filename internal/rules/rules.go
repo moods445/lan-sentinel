@@ -23,15 +23,16 @@ type Store interface {
 	OpenFingerprints(ctx context.Context) (map[string]store.Event, error)
 	CooldownUntil(ctx context.Context, fingerprint string) (time.Time, error)
 	WindowMin(ctx context.Context, host, metric string, since time.Time) (float64, bool, error)
+	WindowMax(ctx context.Context, host, metric string, since time.Time) (float64, bool, error)
 	RecordDecision(ctx context.Context, d store.Decision) error
 }
 
 type Engine struct {
-	st     Store
-	log    *slog.Logger
-	mu     sync.RWMutex
-	rules  []config.Rule
-	rev    string
+	st         Store
+	log        *slog.Logger
+	mu         sync.RWMutex
+	rules      []config.Rule
+	rev        string
 	suppressed map[string]time.Time
 }
 
@@ -120,13 +121,25 @@ func (e *Engine) Evaluate(ctx context.Context) error {
 						continue
 					}
 					if rule.For.Std() > 0 {
-						min, ok, err := e.windowMin(ctx, h.ID, m.key, now.Add(-rule.For.Std()))
-						if err != nil {
-							e.log.Warn("window min failed", "host", h.ID, "metric", m.key, "err", err)
-							continue
-						}
-						if !ok || min < rule.Warning {
-							continue // 窗口内曾回落，不算持续
+						since := now.Add(-rule.For.Std())
+						if rule.Below {
+							max, ok, err := e.windowMax(ctx, h.ID, m.key, since)
+							if err != nil {
+								e.log.Warn("window max failed", "host", h.ID, "metric", m.key, "err", err)
+								continue
+							}
+							if !ok || max > rule.Warning {
+								continue // 窗口内曾回升，不算持续
+							}
+						} else {
+							min, ok, err := e.windowMin(ctx, h.ID, m.key, since)
+							if err != nil {
+								e.log.Warn("window min failed", "host", h.ID, "metric", m.key, "err", err)
+								continue
+							}
+							if !ok || min < rule.Warning {
+								continue // 窗口内曾回落，不算持续
+							}
 						}
 					}
 					fp := fingerprint(h.ID, rule.ID, m.scope)
@@ -191,6 +204,15 @@ func thresholdMetrics(m map[string]store.Latest, rule config.Rule) []metricValue
 
 // classify 返回命中后的最高严重度（critical 优先）
 func classify(v float64, rule config.Rule) (string, bool) {
+	if rule.Below {
+		if rule.Critical != 0 && v <= rule.Critical {
+			return "critical", true
+		}
+		if rule.Warning != 0 && v <= rule.Warning {
+			return "warning", true
+		}
+		return "", false
+	}
 	if rule.Critical != 0 && v >= rule.Critical {
 		return "critical", true
 	}
@@ -215,6 +237,10 @@ func (e *Engine) windowMin(ctx context.Context, host, metric string, since time.
 	return e.st.WindowMin(ctx, host, metric, since)
 }
 
+func (e *Engine) windowMax(ctx context.Context, host, metric string, since time.Time) (float64, bool, error) {
+	return e.st.WindowMax(ctx, host, metric, since)
+}
+
 func (e *Engine) fire(ctx context.Context, h store.HostRow, rule config.Rule, rev, scope string, extra map[string]any, value float64, rationale string) error {
 	return e.fireWithSeverity(ctx, h, rule, rev, scope, "", value, rule.Severity, rationale)
 }
@@ -226,12 +252,12 @@ func (e *Engine) fireWithSeverity(ctx context.Context, h store.HostRow, rule con
 		return nil
 	}
 	detail := map[string]any{
-		"host_id": h.ID,
-		"rule_id": rule.ID,
-		"scope":   scope,
-		"metric":  metric,
-		"value":   value,
-		"warning": rule.Warning,
+		"host_id":  h.ID,
+		"rule_id":  rule.ID,
+		"scope":    scope,
+		"metric":   metric,
+		"value":    value,
+		"warning":  rule.Warning,
 		"critical": rule.Critical,
 	}
 	if rule.For.Std() > 0 {
@@ -268,7 +294,7 @@ func (e *Engine) recordSuppressed(ctx context.Context, fp string, h store.HostRo
 	_ = e.st.RecordDecision(ctx, store.Decision{
 		ActorKind: "rule", Actor: rule.ID, RuleID: rule.ID, RuleRev: rev,
 		Decision: "suppressed", Rationale: "冷却期内，不重复处置",
-		Inputs: map[string]any{"host_id": h.ID, "metric": metric, "value": value, "cooldown_until": until.Format(time.RFC3339)},
+		Inputs:  map[string]any{"host_id": h.ID, "metric": metric, "value": value, "cooldown_until": until.Format(time.RFC3339)},
 		Outcome: "success",
 	})
 }

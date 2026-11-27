@@ -114,6 +114,16 @@ CREATE TABLE IF NOT EXISTS sentinel.collector_state (
     next_run_at timestamptz NOT NULL DEFAULT now()
 );
 
+-- 面板动态添加的节点（当前为 probe）；与 collectors.yaml 合并后由采集器调度
+CREATE TABLE IF NOT EXISTS sentinel.collector_targets (
+    host_id     text PRIMARY KEY,
+    name        text NOT NULL DEFAULT '',
+    type        text NOT NULL DEFAULT 'probe',
+    target      text NOT NULL,
+    interval_s  integer NOT NULL DEFAULT 30,
+    created_at  timestamptz NOT NULL DEFAULT now()
+);
+
 -- 采集策略：global 为默认，host 行按主机覆盖；空字段表示继承
 CREATE TABLE IF NOT EXISTS sentinel.collection_policies (
     scope           text NOT NULL,                 -- global | host

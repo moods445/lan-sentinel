@@ -77,6 +77,10 @@ func (f *fakeStore) WindowMin(_ context.Context, host, metric string, _ time.Tim
 	v, ok := f.window[host+"|"+metric]
 	return v, ok, nil
 }
+func (f *fakeStore) WindowMax(_ context.Context, host, metric string, _ time.Time) (float64, bool, error) {
+	v, ok := f.window[host+"|"+metric]
+	return v, ok, nil
+}
 func (f *fakeStore) RecordDecision(_ context.Context, d store.Decision) error {
 	f.decisions = append(f.decisions, d)
 	return nil
@@ -139,6 +143,36 @@ func TestThresholdOpenResolveAndSuppress(t *testing.T) {
 	}
 	if len(f.decisions) != 3 || f.decisions[2].Decision != "suppressed" {
 		t.Fatalf("decisions = %+v", f.decisions)
+	}
+}
+
+func TestBelowThreshold(t *testing.T) {
+	f := newFake()
+	f.hosts = []store.HostRow{hostWithCPU("probe1", 0)}
+	e := testEngine(f, config.Rule{
+		ID: "probe_down", Type: "metric_threshold", Metric: "probe_ok",
+		Warning: 0.5, Critical: 0.5, Below: true,
+		For: config.Duration(time.Minute), Cooldown: config.Duration(10 * time.Minute), Title: "探活失败",
+	})
+
+	// probe_ok=1：探活正常，不应告警
+	f.latest["probe1"] = map[string]store.Latest{"probe_ok": {Metric: "probe_ok", Value: 1}}
+	f.window["probe1|probe_ok"] = 1
+	if err := e.Evaluate(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(f.open) != 0 {
+		t.Fatalf("healthy probe should not open event")
+	}
+
+	// probe_ok=0：探活失败，应告警
+	f.latest["probe1"]["probe_ok"] = store.Latest{Metric: "probe_ok", Value: 0}
+	f.window["probe1|probe_ok"] = 0
+	if err := e.Evaluate(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(f.open) != 1 {
+		t.Fatalf("dead probe should open event, got %d", len(f.open))
 	}
 }
 

@@ -28,6 +28,11 @@ import (
 var uiHTML []byte
 
 var metricNameRe = regexp.MustCompile(`^[A-Za-z0-9_:./-]{1,120}$`)
+
+// maxSyncBodyBytes 限制解压后的上报体大小：1MiB 的 gzip 可以膨胀到 GB 级，
+// 只限制压缩体不足以防住解压炸弹。
+const maxSyncBodyBytes = 4 << 20
+
 var metricPatternRe = regexp.MustCompile(`^[A-Za-z0-9_:./*-]{1,120}$`)
 var mountRe = regexp.MustCompile(`^(/|[A-Za-z]:[\\/]).{0,118}$`)
 var hostIDRe = regexp.MustCompile(`^[A-Za-z0-9_.-]{1,64}$`)
@@ -39,8 +44,11 @@ type Deps struct {
 	Log          *slog.Logger
 	PanelToken   string
 	AgentToken   string
+	InstallURL   string
 	Reload       func(ctx context.Context) (rulesRev, collectorsRev string, err error)
 	RunCollector func(ctx context.Context, host string) error
+	// SyncCollectors 把数据库中的动态节点同步到采集器调度器
+	SyncCollectors func(ctx context.Context) error
 }
 
 type Server struct {
@@ -65,6 +73,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("PUT /api/v1/policies/hosts/{id}", s.handleSaveHostPolicy)
 	mux.HandleFunc("DELETE /api/v1/policies/hosts/{id}", s.handleDeleteHostPolicy)
 	mux.HandleFunc("POST /api/v1/collectors/{id}/run", s.handleCollectorRun)
+	mux.HandleFunc("GET /api/v1/nodes", s.handleNodes)
+	mux.HandleFunc("POST /api/v1/nodes/probe", s.handleAddProbeNode)
+	mux.HandleFunc("DELETE /api/v1/nodes/probe/{id}", s.handleDeleteProbeNode)
 	mux.HandleFunc("GET /", s.handleUI)
 	return s.recoverMW(s.logMW(s.authMW(mux)))
 }
@@ -182,7 +193,7 @@ func (s *Server) handleSync(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		defer gr.Close()
-		rd = gr
+		rd = io.LimitReader(gr, maxSyncBodyBytes)
 	}
 	var p syncPayload
 	dec := json.NewDecoder(rd)
@@ -366,8 +377,15 @@ func (s *Server) handleDecisions(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleStream(w http.ResponseWriter, r *http.Request) {
-	since := int64(queryInt(r, "since", 0))
+	// seq 是 bigint：用 64 位解析，避免 32 位平台上 int 溢出后从 0 重放全量
+	since := queryInt64(r, "since", 0)
+	if since < 0 {
+		since = 0
+	}
 	limit := queryInt(r, "limit", 200)
+	if limit <= 0 || limit > 500 { // 与 store.StreamSince 的上限保持一致，has_more 才准确
+		limit = 200
+	}
 	wait := 30 * time.Second
 	if v := r.URL.Query().Get("wait"); v != "" {
 		if d, err := time.ParseDuration(v); err == nil && d >= 0 && d <= 60*time.Second {
@@ -486,6 +504,18 @@ func queryInt(r *http.Request, key string, def int) int {
 		return def
 	}
 	n, err := strconv.Atoi(v)
+	if err != nil {
+		return def
+	}
+	return n
+}
+
+func queryInt64(r *http.Request, key string, def int64) int64 {
+	v := r.URL.Query().Get(key)
+	if v == "" {
+		return def
+	}
+	n, err := strconv.ParseInt(v, 10, 64)
 	if err != nil {
 		return def
 	}

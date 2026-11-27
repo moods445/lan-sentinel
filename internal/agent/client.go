@@ -173,14 +173,10 @@ func (c *Client) flush(ctx context.Context) error {
 			return err
 		}
 		c.pending = c.pending[1:]
-		if c.persisted > 0 {
-			c.persist()
-		}
 	}
-	if c.persisted > 0 {
-		_ = c.spool.Clear()
-		c.persisted = 0
-	}
+	// 排空后统一重写一次：逐批重写会在补传积压时放大成上百次全量落盘（弱机 CPU/IO 预算内很贵）。
+	// 中途崩溃最多重发未落盘批次，服务端按 host+metric+ts 幂等。
+	c.persist()
 	return nil
 }
 

@@ -96,6 +96,18 @@ func (s *Store) WindowMin(ctx context.Context, host, metric string, since time.T
 	return *v, true, nil
 }
 
+// WindowMax 用于 below 规则的 `for` 判定：窗口内最大值仍低于阈值才算持续
+func (s *Store) WindowMax(ctx context.Context, host, metric string, since time.Time) (float64, bool, error) {
+	var v *float64
+	err := s.pool.QueryRow(ctx,
+		`SELECT max(value) FROM sentinel.metric_samples WHERE host_id=$1 AND metric=$2 AND ts >= $3`,
+		host, metric, since).Scan(&v)
+	if err != nil || v == nil {
+		return 0, false, err
+	}
+	return *v, true, nil
+}
+
 func (s *Store) InsertRollup(ctx context.Context, host, metric string, bucket time.Time, avg, min, max float64, n int) error {
 	_, err := s.pool.Exec(ctx, `
 		INSERT INTO sentinel.metric_rollup_1m (host_id, metric, bucket, avg, min, max, n)
@@ -435,11 +447,13 @@ type CollectorState struct {
 }
 
 func (s *Store) SaveCollectorState(ctx context.Context, st CollectorState) error {
+	// 失败上报里 LastOKAt 为空，不能把上一次成功时间抹成 NULL
 	_, err := s.pool.Exec(ctx, `
 		INSERT INTO sentinel.collector_state (host_id, failures, last_error, last_ok_at, next_run_at)
 		VALUES ($1,$2,$3,$4,$5)
 		ON CONFLICT (host_id) DO UPDATE SET failures=EXCLUDED.failures, last_error=EXCLUDED.last_error,
-			last_ok_at=EXCLUDED.last_ok_at, next_run_at=EXCLUDED.next_run_at`,
+			last_ok_at=COALESCE(EXCLUDED.last_ok_at, sentinel.collector_state.last_ok_at),
+			next_run_at=EXCLUDED.next_run_at`,
 		st.HostID, st.Failures, st.LastError, st.LastOKAt, st.NextRunAt)
 	return err
 }

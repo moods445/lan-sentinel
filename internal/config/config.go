@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strconv"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -32,25 +31,27 @@ func (d *Duration) UnmarshalYAML(node *yaml.Node) error {
 func (d Duration) Std() time.Duration { return time.Duration(d) }
 
 type Config struct {
-	Listen     string
-	PGDSN      string
-	PanelToken string
-	AgentToken string
-	ConfigDir  string
-	DataDir    string
-	LogLevel   string
+	Listen           string
+	PGDSN            string
+	PanelToken       string
+	AgentToken       string
+	InstallURL       string
+	ConfigDir        string
+	DataDir          string
+	LogLevel         string
 	EnableCollectors bool
 }
 
 func FromEnv() Config {
 	return Config{
-		Listen:     env("SENTINEL_LISTEN", ":8110"),
-		PGDSN:      env("PG_DSN", "postgres://sentinel_app:change-me@127.0.0.1:5432/sentinel?sslmode=disable&pool_max_conns=8"),
-		PanelToken: os.Getenv("PANEL_TOKEN"),
-		AgentToken: os.Getenv("AGENT_TOKEN"),
-		ConfigDir:  env("CONFIG_DIR", "./config"),
-		DataDir:    env("DATA_DIR", "./data"),
-		LogLevel:   env("LOG_LEVEL", "info"),
+		Listen:           env("SENTINEL_LISTEN", ":8110"),
+		PGDSN:            env("PG_DSN", "postgres://sentinel_app:change-me@127.0.0.1:5432/sentinel?sslmode=disable&pool_max_conns=8"),
+		PanelToken:       os.Getenv("PANEL_TOKEN"),
+		AgentToken:       os.Getenv("AGENT_TOKEN"),
+		InstallURL:       env("SENTINEL_INSTALL_URL", "https://raw.githubusercontent.com/moods445/lan-sentinel/master/install.sh"),
+		ConfigDir:        env("CONFIG_DIR", "./config"),
+		DataDir:          env("DATA_DIR", "./data"),
+		LogLevel:         env("LOG_LEVEL", "info"),
 		EnableCollectors: env("ENABLE_COLLECTORS", "1") != "0",
 	}
 }
@@ -62,25 +63,17 @@ func env(k, def string) string {
 	return def
 }
 
-func envInt(k string, def int) int {
-	if v := os.Getenv(k); v != "" {
-		if n, err := strconv.Atoi(v); err == nil {
-			return n
-		}
-	}
-	return def
-}
-
 // ---------- rules ----------
 
 type Rule struct {
 	ID          string   `yaml:"id"`
-	Type        string   `yaml:"type"`   // metric_threshold | heartbeat | collector_failing
+	Type        string   `yaml:"type"` // metric_threshold | heartbeat | collector_failing
 	Metric      string   `yaml:"metric"`
 	Severity    string   `yaml:"severity"`
 	Title       string   `yaml:"title"`
 	Warning     float64  `yaml:"warning"`
 	Critical    float64  `yaml:"critical"`
+	Below       bool     `yaml:"below"` // true = 低于阈值触发（如 probe_ok < 0.5）
 	PerScope    bool     `yaml:"per_scope"`
 	For         Duration `yaml:"for"`
 	Cooldown    Duration `yaml:"cooldown"`
@@ -200,5 +193,3 @@ func rev(b []byte) string {
 	h := sha256.Sum256(b)
 	return hex.EncodeToString(h[:8])
 }
-
-var _ = envInt

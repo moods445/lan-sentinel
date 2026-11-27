@@ -66,6 +66,7 @@ rules:
     metric: probe_ok
     warning: 0.5
     critical: 0.5
+    below: true
     for: 1m
     cooldown: 10m
     title: 探活失败
