@@ -5,7 +5,7 @@ import (
 	"strings"
 )
 
-var agentVersion = "0.2.0"
+var agentVersion = "0.4.0"
 
 func round2(v float64) float64 { return math.Round(v*100) / 100 }
 

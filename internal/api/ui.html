@@ -258,6 +258,37 @@
   .spark .cursor{stroke:rgba(230,238,247,.55);stroke-width:1;vector-effect:non-scaling-stroke}
   .chart-empty{height:100%;display:flex;align-items:center;justify-content:center;color:var(--muted);font-size:11px}
 
+  /* ---------- IO 明细 ---------- */
+  .io-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+  .io-h{display:flex;align-items:baseline;justify-content:space-between;gap:8px;font-size:11.5px;color:var(--dim);margin:0 0 6px}
+  .io-h .muted{font-size:10.5px;margin-left:6px}
+  .io-proc-name{display:inline-block;max-width:170px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;vertical-align:bottom}
+  .dt-hide{display:none}
+  .dt-block{min-width:0}
+  .io-h .dt-toggle{flex:none}
+  .dt-toggle{font-size:11px;padding:3px 10px;height:auto}
+  th.sortable{cursor:pointer;user-select:none;white-space:nowrap}
+  th.sortable:hover{color:var(--fg)}
+  th.sortable.asc::after{content:" ↑";color:var(--accent)}
+  th.sortable.desc::after{content:" ↓";color:var(--accent)}
+  @media (max-width:1180px){.io-grid{grid-template-columns:1fr}}
+
+  /* ---------- 右侧浮动目录 ---------- */
+  .toc{position:fixed;right:14px;top:calc(var(--topbar-h) + 16px);z-index:22;width:96px;
+    background:rgba(20,26,33,.55);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);
+    border:1px solid rgba(47,60,74,.65);border-radius:10px;padding:7px 5px;
+    display:flex;flex-direction:column;gap:1px;opacity:.72;transition:opacity .15s}
+  .toc:hover{opacity:1}
+  .toc.is-hidden{display:none}
+  .toc .toc-a{display:block;width:100%;text-align:left;border:0;background:none;cursor:pointer;
+    font:inherit;font-size:11px;color:var(--dim);padding:4px 8px;border-radius:6px;
+    white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .toc .toc-a:hover{background:var(--panel-2);color:var(--fg)}
+  .toc .toc-a.on{color:var(--fg);background:rgba(76,154,255,.16);box-shadow:inset 2px 0 0 var(--accent)}
+  body.has-toc main{padding-right:116px}
+  [id^="sec"]{scroll-margin-top:calc(var(--topbar-h) + 12px)}
+  @media (max-width:1000px){.toc{display:none} body.has-toc main{padding-right:18px}}
+
   /* ---------- 标签页 ---------- */
   .tabs{display:flex;gap:4px;border-bottom:1px solid var(--line);margin:-2px 0 14px}
   .tab{
@@ -391,6 +422,8 @@
   <main id="view"></main>
 </div>
 
+<nav class="toc is-hidden" id="toc" aria-label="页内目录"></nav>
+
 <div class="overlay" id="overlay" onclick="if(event.target===this)closeDialog()">
   <div class="overlay-card" id="overlayCard"></div>
 </div>
@@ -414,6 +447,11 @@ const num = (v) => (v === undefined || v === null || v === "" || isNaN(v)) ? nul
 const fmt = (v, d) => { const n = num(v); return n === null ? "-" : n.toFixed(d === undefined ? 1 : d); };
 const fmtInt = (v) => { const n = num(v); return n === null ? "-" : Math.round(n).toLocaleString("zh-CN"); };
 const pct = (v) => { const n = num(v); return n === null ? "-" : n.toFixed(1) + "%"; };
+const fmtMB = (v) => {
+  const n = num(v);
+  if (n === null) return "-";
+  return Math.abs(n) >= 1024 ? (n / 1024).toFixed(2) + " GB" : n.toFixed(0) + " MB";
+};
 const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
 
 function fmtBps(v){
@@ -424,6 +462,15 @@ function fmtBps(v){
   if (a >= 1e6) return (n/1e6).toFixed(2) + " Mbps";
   if (a >= 1e3) return (n/1e3).toFixed(1) + " Kbps";
   return n.toFixed(0) + " bps";
+}
+function fmtBytesRate(v){
+  const n = num(v);
+  if (n === null) return "-";
+  const a = Math.abs(n);
+  if (a >= 1073741824) return (n/1073741824).toFixed(2) + " GiB/s";
+  if (a >= 1048576) return (n/1048576).toFixed(2) + " MiB/s";
+  if (a >= 1024) return (n/1024).toFixed(1) + " KiB/s";
+  return n.toFixed(0) + " B/s";
 }
 function fmtUptime(s){
   const n = num(s);
@@ -526,6 +573,8 @@ const MLABEL = {
   cpu_pct:"CPU 使用率", cpu_iowait_pct:"IO 等待", mem_pct:"内存使用率", swap_pct:"Swap 使用率",
   mem_used_gb:"已用内存", load1:"负载 1m", load5:"负载 5m", load15:"负载 15m",
   net_rx_bps:"网络接收", net_tx_bps:"网络发送", proc_count:"进程数", uptime_s:"运行时长",
+  disk_read_bytes_s:"磁盘读", disk_write_bytes_s:"磁盘写",
+  disk_read_iops:"读 IOPS", disk_write_iops:"写 IOPS", disk_util_pct:"磁盘忙碌",
   probe_ok:"可达性", probe_latency_ms:"探测延迟", http_ok:"HTTP 可用性",
   http_latency_ms:"HTTP 延迟", http_status:"HTTP 状态码",
   snmp_cpu_pct:"SNMP CPU", snmp_uptime_s:"SNMP 运行时长"
@@ -547,6 +596,7 @@ const state = {
   pageSig: "",
   nodeMetricsKey: "",
   nodeExtraSig: "",
+  nodeDetailSig: "",
   updatedAt: 0,
   connected: true
 };
@@ -579,6 +629,9 @@ function miniLabel(k){
 function metricValue(k, v){
   const n = num(v);
   if (n === null) return "-";
+  if (k === "disk_read_bytes_s" || k === "disk_write_bytes_s") return fmtBytesRate(n);
+  if (k === "disk_read_iops" || k === "disk_write_iops") return n.toFixed(1) + " IOPS";
+  if (k === "disk_util_pct") return n.toFixed(1) + "%";
   if (k === "uptime_s" || k === "snmp_uptime_s") return fmtUptime(n);
   if (k === "proc_count") return fmtInt(n);
   if (k === "probe_ok") return n >= 1 ? "可达" : "超时";
@@ -604,6 +657,10 @@ function metricColor(k){
   if (k.startsWith("disk_free_gb")) return "#22d3ee";
   if (k === "net_rx_bps" || k.startsWith("if_in_bps:")) return "#4c9aff";
   if (k === "net_tx_bps" || k.startsWith("if_out_bps:")) return "#f472b6";
+  if (k === "disk_read_bytes_s") return "#4c9aff";
+  if (k === "disk_write_bytes_s") return "#f472b6";
+  if (k === "disk_read_iops" || k === "disk_write_iops") return "#a78bfa";
+  if (k === "disk_util_pct") return "#f0a92b";
   if (k.startsWith("temp:")) return "#fb923c";
   if (k.endsWith("_latency_ms")) return "#f0a92b";
   if (k === "probe_ok" || k === "http_ok" || k.startsWith("port_open:") || k.startsWith("if_oper_up:")) return "#2ecc71";
@@ -611,7 +668,8 @@ function metricColor(k){
   return "#8aa0b6";
 }
 const KEY_ORDER = ["cpu_pct","cpu_iowait_pct","load1","load5","load15","mem_pct","swap_pct","mem_used_gb",
-  "net_rx_bps","net_tx_bps","probe_ok","probe_latency_ms","http_ok","http_latency_ms","http_status","proc_count","uptime_s"];
+  "net_rx_bps","net_tx_bps","disk_read_bytes_s","disk_write_bytes_s","disk_read_iops","disk_write_iops","disk_util_pct",
+  "probe_ok","probe_latency_ms","http_ok","http_latency_ms","http_status","proc_count","uptime_s"];
 function metricRank(k){
   const i = KEY_ORDER.indexOf(k);
   if (i >= 0) return i;
@@ -629,12 +687,14 @@ function groupMetrics(m){
   const sys = ["cpu_pct","cpu_iowait_pct","load1","load5","load15"];
   const mem = ["mem_pct","swap_pct","mem_used_gb"];
   const probe = ["probe_ok","probe_latency_ms","http_ok","http_latency_ms","http_status"];
-  const known = new Set([].concat(sys, mem, probe, ["proc_count","uptime_s"]));
+  const io = ["disk_read_bytes_s","disk_write_bytes_s","disk_read_iops","disk_write_iops","disk_util_pct"];
+  const known = new Set([].concat(sys, mem, probe, io, ["proc_count","uptime_s"]));
   const groups = [
     {name:"系统与 CPU", keys: keys.filter(k => sys.includes(k))},
     {name:"内存", keys: keys.filter(k => mem.includes(k))},
-    {name:"磁盘", keys: keys.filter(k => k.startsWith("disk_"))},
+    {name:"磁盘", keys: keys.filter(k => k.startsWith("disk_") && !io.includes(k))},
     {name:"网络", keys: keys.filter(k => k.startsWith("net_") || k.startsWith("if_"))},
+    {name:"磁盘 IO", keys: keys.filter(k => io.includes(k))},
     {name:"探测", keys: keys.filter(k => probe.includes(k) || k.startsWith("port_open:"))},
     {name:"温度与进程", keys: keys.filter(k => k.startsWith("temp:") || k === "proc_count" || k === "uptime_s" || k === "snmp_uptime_s")},
     {name:"其他", keys: keys.filter(k => !known.has(k) && !k.startsWith("disk_") && !k.startsWith("net_") && !k.startsWith("if_") && !k.startsWith("temp:") && !k.startsWith("port_open:"))}
@@ -865,6 +925,11 @@ function panel(title, body, actions){
 function panelTable(title, table, actions){
   return '<section class="panel"><div class="panel-h"><h2>' + title + '</h2><div>' + (actions || "") + '</div></div>' +
     '<div class="panel-b flush">' + table + '</div></section>';
+}
+function sectionPanel(id, title, subtitle, body){
+  return '<section class="panel" id="' + id + '"><div class="panel-h"><h2>' + title + '</h2>' +
+    '<span class="muted" style="font-size:11px">' + subtitle + '</span></div>' +
+    '<div class="panel-b">' + body + '</div></section>';
 }
 function tile(label, value, sub, tone, foot){
   return '<div class="tile ' + (tone || "") + '"><div class="tile-k">' + esc(label) + '</div>' +
@@ -1354,17 +1419,27 @@ const PAGES = {
       const id = state.route.id;
       const entry = hostEntry(id);
       if (!entry) return '<div class="empty">节点 ' + esc(id) + ' 不存在或已被移除。<a href="#/nodes">返回节点列表</a></div>';
-      return '<div id="nodeHead">' + nodeHeadHTML(entry) + '</div>' +
-        '<div class="kpi-row" id="nodeKpis">' + nodeKpiHTML(entry) + '</div>' +
-        '<section class="panel"><div class="panel-h"><h2>指标图表</h2>' +
+      return '<div id="secOverview"><div id="nodeHead">' + nodeHeadHTML(entry) + '</div>' +
+        '<div class="kpi-row" id="nodeKpis">' + nodeKpiHTML(entry) + '</div></div>' +
+        sectionPanel("secCPU", "CPU 明细", "总体 / 每核使用率 · 60 秒采样",
+          '<div id="nodeCPU"><div class="empty">加载中…</div></div>') +
+        sectionPanel("secMem", "内存明细", "使用量 / 缓存 / Swap · 60 秒采样",
+          '<div id="nodeMem"><div class="empty">加载中…</div></div>') +
+        sectionPanel("secNet", "网络明细", "每网卡速率 / 错误 / 丢包 · 60 秒采样",
+          '<div id="nodeNet"><div class="empty">加载中…</div></div>') +
+        sectionPanel("secLoad", "负载明细", "load1/5/15 与阻塞进程 · 60 秒采样",
+          '<div id="nodeLoad"><div class="empty">加载中…</div></div>') +
+        sectionPanel("secIO", "IO 明细", "磁盘设备与热点进程 · 60 秒采样",
+          '<div id="nodeIO"><div class="empty">加载中…</div></div>') +
+        '<section class="panel" id="secCharts"><div class="panel-h"><h2>指标图表</h2>' +
           '<span class="muted" style="font-size:11px">' + esc(rangeShortLabel()) + ' · 悬停查看历史数值</span></div>' +
           '<div class="panel-b"><div id="nodeCharts">' + nodeChartsHTML(entry) + '</div></div></section>' +
         '<div class="grid-2">' +
-          panel("主机信息", '<div id="nodeMeta">' + nodeMetaHTML(entry) + '</div>') +
-          panel("采集策略", '<div id="nodePolicy">' + nodePolicyHTML(id) + '</div>') +
+          '<div id="secMeta">' + panel("主机信息", '<div id="nodeMeta">' + nodeMetaHTML(entry) + '</div>') + '</div>' +
+          '<div id="secPolicy">' + panel("采集策略", '<div id="nodePolicy">' + nodePolicyHTML(id) + '</div>') + '</div>' +
         '</div>' +
-        panelTable("告警", '<div id="nodeAlerts"><div class="empty" style="margin:12px">加载中…</div></div>') +
-        panelTable("决策日志", '<div id="nodeDecisions"><div class="empty" style="margin:12px">加载中…</div></div>');
+        '<div id="secAlerts">' + panelTable("告警", '<div id="nodeAlerts"><div class="empty" style="margin:12px">加载中…</div></div>') + '</div>' +
+        '<div id="secDecisions">' + panelTable("决策日志", '<div id="nodeDecisions"><div class="empty" style="margin:12px">加载中…</div></div>') + '</div>';
     },
     sparks(){
       const entry = hostEntry(state.route.id);
@@ -1374,6 +1449,7 @@ const PAGES = {
     mount(){
       if ($("nodeAlerts")) $("nodeAlerts").innerHTML = '<div class="empty" style="margin:12px">加载中…</div>';
       if ($("nodeDecisions")) $("nodeDecisions").innerHTML = '<div class="empty" style="margin:12px">加载中…</div>';
+      loadNodeDetail(state.route.id);
       loadNodeExtras(state.route.id);
     }
   },
@@ -1541,6 +1617,38 @@ function crumbHTML(page){
   }
   return parts.join('<span class="sep">/</span>');
 }
+/* ---------- 右侧浮动目录 ---------- */
+const TOC_ITEMS = [
+  ["secOverview", "概览"], ["secCPU", "CPU"], ["secMem", "内存"], ["secNet", "网络"],
+  ["secLoad", "负载"], ["secIO", "IO"], ["secCharts", "图表"],
+  ["secMeta", "主机信息"], ["secPolicy", "采集策略"], ["secAlerts", "告警"], ["secDecisions", "决策"]
+];
+let tocRaf = 0;
+function buildTOC(){
+  const nav = $("toc");
+  if (!nav) return;
+  nav.innerHTML = TOC_ITEMS.map(([id, label]) =>
+    '<button class="toc-a" data-target="' + id + '">' + esc(label) + '</button>').join("");
+  nav.classList.remove("is-hidden");
+  document.body.classList.add("has-toc");
+  updateTOCActive();
+}
+function hideTOC(){
+  const nav = $("toc");
+  if (nav) nav.classList.add("is-hidden");
+  document.body.classList.remove("has-toc");
+}
+function updateTOCActive(){
+  const nav = $("toc");
+  if (!nav || nav.classList.contains("is-hidden")) return;
+  let active = TOC_ITEMS[0][0];
+  for (const [id] of TOC_ITEMS){
+    const el = $(id);
+    if (!el) continue;
+    if (el.getBoundingClientRect().top <= 120) active = id;
+  }
+  nav.querySelectorAll(".toc-a").forEach(b => b.classList.toggle("on", b.dataset.target === active));
+}
 function renderPage(force){
   const page = PAGES[state.route.name] || PAGES.overview;
   const sig = page.sig ? page.sig() : "";
@@ -1552,6 +1660,7 @@ function renderPage(force){
   document.title = (page.crumb ? page.crumb() : "LanSentinel") + " · LanSentinel";
   $("crumb").innerHTML = crumbHTML(page);
   if (page.mount) page.mount();
+  if (state.route.name === "node" && $("secCPU")) buildTOC(); else hideTOC();
   $("searchWrap").classList.toggle("is-hidden", !(state.route.name === "overview" || state.route.name === "nodes"));
   paintSparks();
   if (page.sparks) ensureSparks(page.sparks()).then(paintSparks);
@@ -1602,6 +1711,271 @@ function updateChrome(){
 }
 
 /* ============================== 节点详情动态更新 ============================== */
+function headerCell(h, i){
+  const isNum = /c-num/.test(h);
+  const clean = h.replace(/\s*class="[^"]*"/, "");
+  return clean.replace("<th", '<th class="sortable' + (isNum ? " c-num" : "") +
+    '" data-sort-index="' + i + '" data-sort="' + (isNum ? "num" : "text") + '"');
+}
+function dtButton(rows, visible){
+  if (!rows || rows.length <= visible) return "";
+  return '<button class="btn ghost sm dt-toggle" data-expanded="0" data-visible="' + visible + '">展开全部 (' + rows.length + ')</button>';
+}
+function dtTitle(title, meta){
+  return '<span>' + esc(title || "") + (meta ? '<span class="muted">' + esc(meta) + '</span>' : '') + '</span>';
+}
+function collapsibleTable(headers, rows, opts){
+  const o = opts || {};
+  const visible = o.visible || 3;
+  const bar = (o.title || (rows && rows.length > visible))
+    ? '<div class="io-h">' + dtTitle(o.title, o.meta) + dtButton(rows || [], visible) + '</div>'
+    : "";
+  if (!rows || !rows.length){
+    return '<div class="dt-block">' + bar +
+      '<div class="empty" style="margin:8px 0">' + esc(o.empty || "暂无数据") + '</div></div>';
+  }
+  const body = rows.map((r, i) => '<tr' + (i >= visible ? ' class="dt-hide"' : '') + '>' + r + '</tr>').join("");
+  return '<div class="dt-block" data-visible="' + visible + '">' + bar +
+    '<div class="tbl-wrap"><table class="tbl"><thead><tr>' + headers.map(headerCell).join("") +
+    '</tr></thead><tbody>' + body + '</tbody></table></div></div>';
+}
+function toggleDetailRows(btn){
+  const block = btn.closest(".dt-block");
+  if (!block) return;
+  const visible = parseInt(btn.dataset.visible, 10) || 3;
+  const rows = block.querySelectorAll("tbody tr");
+  if (btn.dataset.expanded === "1"){
+    rows.forEach((tr, i) => tr.classList.toggle("dt-hide", i >= visible));
+    btn.dataset.expanded = "0";
+    btn.textContent = "展开全部 (" + rows.length + ")";
+  } else {
+    rows.forEach(tr => tr.classList.remove("dt-hide"));
+    btn.dataset.expanded = "1";
+    btn.textContent = "收起";
+  }
+}
+function sortableValue(td, type){
+  if (!td) return null;
+  if (type === "text") return (td.textContent || "").trim().toLowerCase();
+  const raw = td.dataset.v;
+  if (raw !== undefined && raw !== ""){
+    const n = num(raw);
+    if (n !== null) return n;
+  }
+  const t = (td.textContent || "").trim();
+  const m = t.match(/^(-?[\d,]+(?:\.\d+)?)\s*([KMG]i?B\/s|[KMG]i?B|bps|Kbps|Mbps|Gbps|%|ms)?/);
+  if (!m) return null;
+  let n = parseFloat(m[1].replace(/,/g, ""));
+  if (isNaN(n)) return null;
+  const mult = {
+    "B/s": 1, "KiB/s": 1024, "MiB/s": 1048576, "GiB/s": 1073741824,
+    "KB/s": 1000, "MB/s": 1e6, "GB/s": 1e9,
+    "B": 1, "KiB": 1024, "MiB": 1048576, "GiB": 1073741824,
+    "KB": 1000, "MB": 1e6, "GB": 1e9,
+    "Kbps": 1e3, "Mbps": 1e6, "Gbps": 1e9
+  }[m[2] || ""];
+  if (mult) n *= mult;
+  return n;
+}
+function sortTable(th){
+  const table = th.closest("table");
+  const block = th.closest(".dt-block");
+  const tbody = table && table.querySelector("tbody");
+  if (!tbody || !block) return;
+  const idx = parseInt(th.dataset.sortIndex, 10);
+  const type = th.dataset.sort || "text";
+  let dir;
+  if (!th.dataset.dir) dir = type === "num" ? "desc" : "asc";
+  else dir = th.dataset.dir === "desc" ? "asc" : "desc";
+  const rows = Array.from(tbody.querySelectorAll("tr"));
+  const keyed = rows.map(tr => ({tr: tr, v: sortableValue(tr.children[idx], type)}));
+  keyed.sort((a, b) => {
+    let c;
+    if (type === "num"){
+      const av = a.v === null ? -Infinity : a.v;
+      const bv = b.v === null ? -Infinity : b.v;
+      c = av - bv;
+    } else {
+      c = String(a.v).localeCompare(String(b.v), "zh-CN", {numeric: true, sensitivity: "base"});
+    }
+    return dir === "asc" ? c : -c;
+  });
+  keyed.forEach(x => tbody.appendChild(x.tr));
+  table.querySelectorAll("th.sortable").forEach(h => {
+    h.dataset.dir = "";
+    h.classList.remove("asc", "desc");
+  });
+  th.dataset.dir = dir;
+  th.classList.add(dir);
+  const btn = block.querySelector(".dt-toggle");
+  const visible = parseInt(block.dataset.visible, 10) || 3;
+  const expanded = btn ? btn.dataset.expanded === "1" : false;
+  keyed.forEach((x, i) => x.tr.classList.toggle("dt-hide", !expanded && i >= visible));
+}
+function detailEmpty(d, label){
+  if (!d || !d.ts) return '<div class="empty">该节点暂未上报' + esc(label) + '明细。需要 0.4.0+ 版 Agent，每 60 秒上报一次。</div>';
+  return '<div class="empty">等待首次采样（60 秒）…</div>';
+}
+function procName(p){
+  return '<td><span class="io-proc-name" title="' + esc(p.name) + '">' + esc(p.name) + '</span></td>' +
+    '<td class="muted">' + esc(p.pid) + '</td>';
+}
+function cpuDetailHTML(d){
+  if (!d.ts) return detailEmpty(d, "CPU");
+  const c = d.cpu || {}, l = d.load || {};
+  const cores = (c.cores || []).slice().sort((a, b) => num(b.usage_pct) - num(a.usage_pct));
+  const procs = (d.procs || []).slice().sort((a, b) => num(b.cpu_pct) - num(a.cpu_pct));
+  const kpis = '<div class="kpi-row" style="margin-bottom:14px">' +
+    kpi("CPU 使用率", pct(c.usage_pct), "IO 等待 " + pct(c.iowait_pct), mbar(c.usage_pct, 70, 90)) +
+    kpi("核心数", cores.length ? String(cores.length) : "-", "按使用率排序") +
+    kpi("运行队列", l.running ? String(l.running) : "-", "线程 " + (l.total_threads || "-")) +
+    kpi("阻塞进程", String(l.blocked || 0), "D 状态") +
+    '</div>';
+  const coreRows = cores.map(x => '<td>' + esc(x.name) + '</td>' +
+    '<td class="c-num">' + pctCell(x.usage_pct, 70, 90) + '</td>' +
+    '<td class="c-num">' + pctCell(x.iowait_pct, 30, 60) + '</td>');
+  const procRows = procs.map(p => procName(p) +
+    '<td class="c-num">' + esc(fmt(p.cpu_pct, 1)) + '%</td>' +
+    '<td class="c-num">' + esc(fmtMB(p.rss_mb)) + '</td>' +
+    '<td class="muted">' + esc(p.state || "-") + '</td>');
+  return kpis + '<div class="io-grid">' +
+    '<div>' + collapsibleTable(['<th>核心</th>', '<th class="c-num">使用率</th>', '<th class="c-num">IO 等待</th>'], coreRows,
+      {title:"核心使用率", meta:cores.length + " 核", empty:"暂无核心数据"}) + '</div>' +
+    '<div>' + collapsibleTable(['<th>进程</th>', '<th class="c-num">PID</th>', '<th class="c-num">CPU</th>', '<th class="c-num">内存</th>', '<th>状态</th>'], procRows,
+      {title:"CPU 占用进程", meta:"按 CPU 排序", empty:"暂无进程数据"}) + '</div>' +
+    '</div>';
+}
+function memDetailHTML(d){
+  if (!d.ts) return detailEmpty(d, "内存");
+  const m = d.mem || {};
+  const total = num(m.total_mb) || 0;
+  const procs = (d.procs || []).slice().sort((a, b) => num(b.rss_mb) - num(a.rss_mb));
+  const swap = num(m.swap_total_mb) > 0
+    ? fmtMB(m.swap_used_mb) + " / " + fmtMB(m.swap_total_mb)
+    : "未启用";
+  const kpis = '<div class="kpi-row" style="margin-bottom:14px">' +
+    kpi("内存使用", pct(m.used_pct), "已用 " + fmtMB(m.used_mb) + " / " + fmtMB(m.total_mb), mbar(m.used_pct, 80, 92)) +
+    kpi("可用", fmtMB(m.available_mb), "MemAvailable") +
+    kpi("缓存", fmtMB(m.cached_mb), "Cached + Buffers") +
+    kpi("Swap", swap, "交换分区") +
+    '</div>';
+  const procRows = procs.map(p => {
+    const share = total > 0 ? (num(p.rss_mb) || 0) / total * 100 : null;
+    return procName(p) +
+      '<td class="c-num">' + esc(fmtMB(p.rss_mb)) + '</td>' +
+      '<td class="c-num">' + esc(pct(share)) + '</td>' +
+      '<td class="c-num">' + esc(fmt(p.cpu_pct, 1)) + '%</td>' +
+      '<td class="muted">' + esc(p.state || "-") + '</td>';
+  });
+  return kpis + collapsibleTable(
+    ['<th>进程</th>', '<th class="c-num">PID</th>', '<th class="c-num">内存</th>', '<th class="c-num">占比</th>', '<th class="c-num">CPU</th>', '<th>状态</th>'],
+    procRows, {title:"内存占用进程", meta:"按 RSS 排序", empty:"暂无进程数据"});
+}
+function netDetailHTML(d){
+  if (!d.ts) return detailEmpty(d, "网络");
+  const n = d.net || {};
+  const ifs = (n.interfaces || []).slice().sort((a, b) => (num(b.rx_bytes_s) + num(b.tx_bytes_s)) - (num(a.rx_bytes_s) + num(a.tx_bytes_s)));
+  const kpis = '<div class="kpi-row" style="margin-bottom:14px">' +
+    kpi("总接收", fmtBytesRate(n.rx_bytes_s), "不含 lo") +
+    kpi("总发送", fmtBytesRate(n.tx_bytes_s), "不含 lo") +
+    kpi("接口数", String(ifs.length), "含 lo") +
+    '</div>';
+  const rows = ifs.map(x =>
+    '<td><b>' + esc(x.name) + '</b></td>' +
+    '<td class="c-num">' + esc(fmtBytesRate(x.rx_bytes_s)) + '</td>' +
+    '<td class="c-num">' + esc(fmtBytesRate(x.tx_bytes_s)) + '</td>' +
+    '<td class="c-num">' + esc(fmtInt(x.rx_packets_s)) + '</td>' +
+    '<td class="c-num">' + esc(fmtInt(x.tx_packets_s)) + '</td>' +
+    '<td class="c-num">' + esc(fmtInt(x.rx_errors) + " / " + fmtInt(x.tx_errors)) + '</td>' +
+    '<td class="c-num">' + esc(fmtInt(x.rx_drops) + " / " + fmtInt(x.tx_drops)) + '</td>');
+  return kpis + collapsibleTable(
+    ['<th>接口</th>', '<th class="c-num">接收</th>', '<th class="c-num">发送</th>',
+     '<th class="c-num">收包/s</th>', '<th class="c-num">发包/s</th>',
+     '<th class="c-num">错误(收/发)</th>', '<th class="c-num">丢包(收/发)</th>'],
+    rows, {title:"网卡", meta:ifs.length + " 个", empty:"暂无网卡数据"});
+}
+function loadDetailHTML(d){
+  if (!d.ts) return detailEmpty(d, "负载");
+  const l = d.load || {};
+  const blocked = (d.procs || []).filter(p => p.state === "D").sort((a, b) => num(b.cpu_pct) - num(a.cpu_pct));
+  const kpis = '<div class="kpi-row" style="margin-bottom:14px">' +
+    kpi("负载 1m", fmt(l.load1, 2), "load average") +
+    kpi("负载 5m", fmt(l.load5, 2), "load average") +
+    kpi("负载 15m", fmt(l.load15, 2), "load average") +
+    kpi("运行 / 线程", (l.running || l.total_threads) ? (l.running + " / " + l.total_threads) : "-", "/proc/loadavg") +
+    kpi("阻塞进程", String(l.blocked || 0), "D 状态") +
+    '</div>';
+  const rows = blocked.map(p => procName(p) +
+    '<td class="c-num">' + esc(fmt(p.cpu_pct, 1)) + '%</td>' +
+    '<td class="c-num">' + esc(fmtMB(p.rss_mb)) + '</td>' +
+    '<td class="muted">' + esc(p.state || "D") + '</td>');
+  return kpis + collapsibleTable(
+    ['<th>进程</th>', '<th class="c-num">PID</th>', '<th class="c-num">CPU</th>', '<th class="c-num">内存</th>', '<th>状态</th>'],
+    rows, {title:"阻塞进程", meta:"不可中断睡眠（D）", empty:"无阻塞进程"});
+}
+function ioDetailHTML(d){
+  if (!d.ts) return detailEmpty(d, "IO");
+  const io = d.io || {};
+  const s = io.summary || {};
+  const devs = io.devices || [];
+  const procs = (d.procs || []).slice().sort((a, b) =>
+    (num(b.read_bytes_s) + num(b.write_bytes_s)) - (num(a.read_bytes_s) + num(a.write_bytes_s)));
+  const kpis = '<div class="kpi-row" style="margin-bottom:14px">' +
+    kpi("磁盘读", fmtBytesRate(s.read_bytes_s), fmt(s.read_iops, 1) + " IOPS") +
+    kpi("磁盘写", fmtBytesRate(s.write_bytes_s), fmt(s.write_iops, 1) + " IOPS") +
+    kpi("最忙设备", pct(s.util_pct), "设备忙碌度", mbar(s.util_pct, 70, 90)) +
+    kpi("进程数", fmtInt(s.proc_count), "采样于 " + ago(d.ts)) +
+    '</div>';
+  const devRows = devs.map(x =>
+    '<td><b>' + esc(x.name) + '</b></td>' +
+    '<td class="c-num">' + esc(fmtBytesRate(x.read_bytes_s)) + '</td>' +
+    '<td class="c-num">' + esc(fmtBytesRate(x.write_bytes_s)) + '</td>' +
+    '<td class="c-num">' + esc(fmt(x.read_iops, 1)) + '</td>' +
+    '<td class="c-num">' + esc(fmt(x.write_iops, 1)) + '</td>' +
+    '<td class="c-num">' + pctCell(x.util_pct, 70, 90) + '</td>' +
+    '<td class="c-num">' + esc(fmt(x.await_ms, 2)) + ' ms</td>' +
+    '<td class="c-num">' + esc(fmt(x.queue, 2)) + '</td>');
+  const procRows = procs.map(p => procName(p) +
+    '<td class="c-num">' + esc(fmtBytesRate(p.read_bytes_s)) + '</td>' +
+    '<td class="c-num">' + esc(fmtBytesRate(p.write_bytes_s)) + '</td>' +
+    '<td class="c-num">' + esc(fmt(p.cpu_pct, 1)) + '%</td>' +
+    '<td class="c-num">' + esc(fmtMB(p.rss_mb)) + '</td>' +
+    '<td class="muted">' + esc(p.state || "-") + '</td>');
+  return kpis + '<div class="io-grid">' +
+    '<div>' + collapsibleTable(['<th>设备</th>', '<th class="c-num">读</th>', '<th class="c-num">写</th>',
+        '<th class="c-num">读 IOPS</th>', '<th class="c-num">写 IOPS</th>',
+        '<th class="c-num">忙碌</th>', '<th class="c-num">延迟</th>', '<th class="c-num">队列</th>'],
+        devRows, {title:"磁盘设备", meta:devs.length + " 块 · 不含分区", empty:"暂无设备 IO 数据"}) + '</div>' +
+    '<div>' + collapsibleTable(['<th>进程</th>', '<th class="c-num">PID</th>', '<th class="c-num">读</th>', '<th class="c-num">写</th>',
+        '<th class="c-num">CPU</th>', '<th class="c-num">内存</th>', '<th>状态</th>'],
+        procRows, {title:"热点进程", meta:"按读写排序", empty:"暂无进程 IO 数据（macOS 仅提供设备 IO）"}) + '</div>' +
+    '</div>';
+}
+function renderNodeDetail(d){
+  const set = (id, html) => { const el = $(id); if (el) el.innerHTML = html; };
+  set("nodeCPU", cpuDetailHTML(d));
+  set("nodeMem", memDetailHTML(d));
+  set("nodeNet", netDetailHTML(d));
+  set("nodeLoad", loadDetailHTML(d));
+  set("nodeIO", ioDetailHTML(d));
+}
+async function loadNodeDetail(id){
+  if (!id) return;
+  try{
+    const d = await api("/api/v1/hosts/" + encodeURIComponent(id) + "/detail");
+    if (state.route.name !== "node" || state.route.id !== id) return;
+    const sig = JSON.stringify(d);
+    if (sig === state.nodeDetailSig) return;
+    state.nodeDetailSig = sig;
+    renderNodeDetail(d);
+  }catch(e){
+    if (e.message === "unauthorized") return;
+    ["nodeCPU", "nodeMem", "nodeNet", "nodeLoad", "nodeIO"].forEach(k => {
+      const el = $(k);
+      if (el) el.innerHTML = '<div class="empty">加载明细失败：' + esc(e.message) + '</div>';
+    });
+  }
+}
 async function loadNodeExtras(id){
   try{
     const res = await Promise.all([
@@ -1641,6 +2015,7 @@ function updateNodePage(){
     if (b) b.textContent = val;
     card.dataset.latest = val;
   });
+  loadNodeDetail(id);
   loadNodeExtras(id);
 }
 function refreshNodeCharts(){
@@ -1648,6 +2023,7 @@ function refreshNodeCharts(){
   if (!entry) return;
   Object.keys(entry.host.metrics || {}).forEach(k => sparkBuf.delete(entry.host.id + "|" + k));
   state.nodeMetricsKey = "";
+  state.nodeDetailSig = "";
   updateNodePage();
   paintSparks();
   toast("正在重新拉取曲线…");
@@ -1669,6 +2045,7 @@ async function enterNode(id){
   state.route = {name:"node", id:id};
   state.nodeMetricsKey = "";
   state.nodeExtraSig = "";
+  state.nodeDetailSig = "";
   if (!hostEntry(id)){
     try{
       const h = await api("/api/v1/hosts/" + encodeURIComponent(id));
@@ -1821,6 +2198,23 @@ function bind(){
     state.pageSig = "";
     renderPage(true);
   });
+  document.addEventListener("click", e => {
+    if (!e.target.closest) return;
+    const toc = e.target.closest(".toc-a");
+    if (toc){
+      const el = $(toc.dataset.target);
+      if (el) el.scrollIntoView({behavior: "smooth", block: "start"});
+      return;
+    }
+    const th = e.target.closest("th.sortable");
+    if (th){ sortTable(th); return; }
+    const dt = e.target.closest(".dt-toggle");
+    if (dt) toggleDetailRows(dt);
+  });
+  window.addEventListener("scroll", () => {
+    if (tocRaf) return;
+    tocRaf = requestAnimationFrame(() => { tocRaf = 0; updateTOCActive(); });
+  }, {passive: true});
   document.addEventListener("mousemove", onChartMove);
   document.addEventListener("mouseout", e => {
     if (!hoverCard) return;

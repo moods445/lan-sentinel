@@ -516,5 +516,8 @@ func (s *Store) Retention(ctx context.Context) error {
 	if _, err := s.pool.Exec(ctx, `DELETE FROM sentinel.metric_latest WHERE ts < now() - interval '7 days'`); err != nil {
 		return err
 	}
+	if _, err := s.pool.Exec(ctx, `DELETE FROM sentinel.host_io_latest WHERE ts < now() - interval '7 days'`); err != nil {
+		return err
+	}
 	return nil
 }

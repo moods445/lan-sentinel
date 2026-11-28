@@ -1,5 +1,5 @@
 GO      ?= go
-VERSION ?= 0.2.1
+VERSION ?= 0.4.0
 REGISTRY ?= ghcr.io/moods445
 IMAGE   ?= $(REGISTRY)/lan-sentinel:$(VERSION)
 AGENT_IMAGE ?= $(REGISTRY)/lan-sentinel-agent:$(VERSION)

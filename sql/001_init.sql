@@ -36,6 +36,13 @@ CREATE TABLE IF NOT EXISTS sentinel.metric_latest (
     PRIMARY KEY (host_id, metric)
 );
 
+-- 每次 Agent 低频上报的系统明细快照（IO/CPU/内存/网络/负载），只保留最新值
+CREATE TABLE IF NOT EXISTS sentinel.host_io_latest (
+    host_id text PRIMARY KEY,
+    ts      timestamptz NOT NULL,
+    payload jsonb NOT NULL DEFAULT '{}'::jsonb
+);
+
 CREATE TABLE IF NOT EXISTS sentinel.metric_rollup_1m (
     host_id text NOT NULL,
     metric  text NOT NULL,

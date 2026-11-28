@@ -38,6 +38,7 @@ type Client struct {
 	prevSelf   float64
 	prevSelfTS time.Time
 	failStreak int
+	lastDetail time.Time
 
 	zbuf bytes.Buffer
 	zw   *gzip.Writer
@@ -78,6 +79,7 @@ type syncPayload struct {
 	} `json:"host"`
 	TS      time.Time          `json:"ts"`
 	Metrics map[string]float64 `json:"metrics"`
+	Detail  *DetailSnapshot    `json:"detail,omitempty"`
 	Self    struct {
 		IntervalS int     `json:"interval_s"`
 		Throttled bool    `json:"throttled"`
@@ -105,6 +107,15 @@ func (c *Client) Step(ctx context.Context, forceCollect bool) error {
 	}
 	c.tick++
 
+	// 系统明细低频采集：速率需要上一样本做差分，首次只建立基线
+	var detailSnap *DetailSnapshot
+	if dr, ok := c.coll.(DetailReporter); ok {
+		if c.lastDetail.IsZero() || now.Sub(c.lastDetail) >= detailInterval {
+			detailSnap = dr.CollectDetail(now)
+			c.lastDetail = now
+		}
+	}
+
 	var p syncPayload
 	p.Host.ID = c.cfg.HostID
 	p.Host.Name = c.meta.Hostname
@@ -114,6 +125,7 @@ func (c *Client) Step(ctx context.Context, forceCollect bool) error {
 	p.Host.Meta = map[string]any{"kernel": c.meta.Kernel, "agent": c.meta.Agent}
 	p.TS = now
 	p.Metrics = metrics
+	p.Detail = detailSnap
 	p.Self.IntervalS = int(c.interval / time.Second)
 	p.Self.Throttled = c.throttled
 
@@ -303,11 +315,16 @@ func (c *Client) PrintOnce() error {
 	if err != nil {
 		return err
 	}
+	var detailSnap *DetailSnapshot
+	if dr, ok := c.coll.(DetailReporter); ok {
+		detailSnap = dr.CollectDetail(time.Now())
+	}
 	out := struct {
 		Host    string             `json:"host"`
 		Meta    Meta               `json:"meta"`
 		Metrics map[string]float64 `json:"metrics"`
-	}{c.cfg.HostID, c.meta, m}
+		Detail  *DetailSnapshot    `json:"detail,omitempty"`
+	}{c.cfg.HostID, c.meta, m, detailSnap}
 	b, _ := json.MarshalIndent(out, "", "  ")
 	os.Stdout.Write(b)
 	fmt.Println()

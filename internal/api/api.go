@@ -64,6 +64,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/v1/hosts", s.handleHosts)
 	mux.HandleFunc("GET /api/v1/hosts/{id}", s.handleHost)
 	mux.HandleFunc("GET /api/v1/hosts/{id}/metrics", s.handleMetrics)
+	mux.HandleFunc("GET /api/v1/hosts/{id}/detail", s.handleHostDetail)
+	mux.HandleFunc("GET /api/v1/hosts/{id}/io", s.handleHostIO)
 	mux.HandleFunc("GET /api/v1/events", s.handleEvents)
 	mux.HandleFunc("GET /api/v1/decisions", s.handleDecisions)
 	mux.HandleFunc("GET /api/v1/stream", s.handleStream)
@@ -176,6 +178,8 @@ type syncPayload struct {
 	Host    syncHost           `json:"host"`
 	TS      time.Time          `json:"ts"`
 	Metrics map[string]float64 `json:"metrics"`
+	IO      *ioSnapshot        `json:"io,omitempty"`     // 旧版 Agent
+	Detail  *detailSnapshot    `json:"detail,omitempty"` // 0.4+
 	Self    struct {
 		IntervalS int     `json:"interval_s"`
 		Throttled bool    `json:"throttled"`
@@ -215,7 +219,15 @@ func (s *Server) handleSync(w http.ResponseWriter, r *http.Request) {
 	if ts.IsZero() || now.Sub(ts) > 48*time.Hour || ts.After(now.Add(5*time.Minute)) {
 		ts = now
 	}
-	samples := make([]store.Sample, 0, len(p.Metrics))
+	detail := p.Detail
+	if detail == nil && p.IO != nil {
+		detail = &detailSnapshot{IO: p.IO.ioStats, Procs: p.IO.Procs}
+	}
+	sanitizeDetail(detail)
+	samples := make([]store.Sample, 0, len(p.Metrics)+5)
+	if detail != nil {
+		samples = append(samples, ioSamples(&detail.IO, ts)...)
+	}
 	for name, v := range p.Metrics {
 		if !metricNameRe.MatchString(name) || math.IsNaN(v) || math.IsInf(v, 0) {
 			continue
@@ -241,6 +253,13 @@ func (s *Server) handleSync(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.d.Rollup.Add(p.Host.ID, samples)
+	if detail != nil {
+		if raw, err := json.Marshal(detail); err != nil {
+			s.d.Log.Warn("marshal host detail failed", "host", p.Host.ID, "err", err)
+		} else if err := s.d.Store.SaveHostDetail(ctx, p.Host.ID, ts, raw); err != nil {
+			s.d.Log.Warn("save host detail failed", "host", p.Host.ID, "err", err)
+		}
+	}
 	resp := map[string]any{"ok": true, "tasks": []any{}, "interval_s": 15}
 	if pol, perr := s.d.Store.EffectivePolicy(ctx, p.Host.ID); perr != nil {
 		s.d.Log.Warn("load policy failed", "host", p.Host.ID, "err", perr)
